@@ -10,9 +10,14 @@ from app.services.schematic_service import build_schematic
 from app.services.vcd_parser import parse_vcd
 from app.services.yosys_service import YosysService
 
+import os
+
 router = APIRouter()
 yosys_service = YosysService()
-UPLOAD_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "workspaces"
+if os.environ.get("VERCEL"):
+    UPLOAD_ROOT = Path("/tmp/circuitvr_uploads/workspaces")
+else:
+    UPLOAD_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "workspaces"
 
 
 class PathReq(BaseModel):

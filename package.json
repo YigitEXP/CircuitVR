@@ -1,0 +1,10 @@
+{
+  "name": "circuit-vr",
+  "private": true,
+  "version": "2.0.9",
+  "scripts": {
+    "install:frontend": "cd frontend && npm install",
+    "build": "cd frontend && npm install && npm run build",
+    "dev": "cd frontend && npm run dev"
+  }
+}

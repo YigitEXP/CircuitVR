@@ -22,10 +22,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files for uploads
-uploads_dir = Path(__file__).parent.parent.parent / "uploads"
-uploads_dir.mkdir(exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+# Mount static files for uploads (use /tmp on Vercel read-only serverless environment)
+if os.environ.get("VERCEL"):
+    uploads_dir = Path("/tmp/circuitvr_uploads")
+else:
+    uploads_dir = Path(__file__).parent.parent.parent / "uploads"
+try:
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+except OSError:
+    pass
 
 # Include routers
 app.include_router(workspace.router, prefix="/api/workspace", tags=["workspace"])

@@ -6,7 +6,7 @@
 
 ### **SystemVerilog · Verilog · VHDL RTL & Edge AI Hardware Design Studio**
 
-*Gerçek Zamanlı Sentez Şematiği, Dalga Formu (Waveform) Simülasyonu, Statik/Netlist Lint Denetimi ve Akıllı RTL Optimizasyon Danışmanı*  
+*Gerçek Zamanlı Sentez Şematiği, Waveform Simülasyonu, Lint Denetimi ve Akıllı RTL Optimizasyon Danışmanı*  
 *Real-Time Synthesis Schematics, VCD Waveform Simulation, Static/Netlist Linting & Smart RTL Optimization Advisor*
 
 [![HDL Support](https://img.shields.io/badge/HDL-SystemVerilog%20%7C%20Verilog%20%7C%20VHDL-6366f1?style=for-the-badge)](#)
@@ -23,7 +23,7 @@
 
 # 🇹🇷 Türkçe Dokümantasyon
 
-## 🎯 Proje Nedir ve Neden Geliştirildi?
+## 🎯 Proje Neden Geliştirildi?
 
 **CircuitVR**, donanım ve Edge AI mühendislerinin devasa boyutlu (50+ GB) kurumsal FPGA/ASIC araçlarını açmadan; **SystemVerilog (`.sv`, `.svh`)**, **Verilog (`.v`, `.vh`)** ve **VHDL (`.vhd`, `.vhdl`)** projelerini saniyeler içinde:
 1. **Kodlayabildiği** (canlı hata/uyarı işaretlemeli editör ve otomatik dosya izleyici),
@@ -32,7 +32,7 @@
 4. **Lint ve Yapısal Denetimden Geçirebildiği** (Verilator + Icarus + Akıllı AST Ön-Denetim),
 5. **Akıllı RTL Optimizasyon Danışmanı ile Optimize Edebildiği** (`0–100` Optimizasyon Skoru + *"Mevcut Kod ➔ Önerilen Optimize Kod"* dönüşümleri)
 
-modern, karanlık temalı (Dark Mode & Glassmorphism) bir donanım geliştirme ortamıdır (IDE).
+modern, karanlık temalı (Dark Mode & Glassmorphism) bir donanım IDEsidir.
 
 ---
 

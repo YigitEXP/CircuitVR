@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="12" y1="12" x2="52" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded Dark Badge -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)" stroke="url(#chip)" stroke-width="2.5"/>
+  <!-- Top & Bottom IC Pins -->
+  <path d="M22 8V16M32 8V16M42 8V16M22 48V56M32 48V56M42 48V56" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
+  <!-- Left & Right IC Pins -->
+  <path d="M8 22H16M8 32H16M8 42H16M48 22H56M48 32H56M48 42H56" stroke="#818cf8" stroke-width="3" stroke-linecap="round"/>
+  <!-- Silicon Die Body -->
+  <rect x="16" y="16" width="32" height="32" rx="6" fill="#0b1120" stroke="url(#chip)" stroke-width="2.5"/>
+  <!-- Internal RTL Logic Traces & Nodes -->
+  <path d="M23 26H31L35 32H41M23 38H29L33 32" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="23" cy="26" r="2.3" fill="#38bdf8"/>
+  <circle cx="23" cy="38" r="2.3" fill="#a855f7"/>
+  <circle cx="41" cy="32" r="2.6" fill="#4ade80"/>
+</svg>

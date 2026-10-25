@@ -148,6 +148,16 @@ def tool_report() -> Dict[str, Dict[str, Any]]:
         "vvp": "simülasyon (Icarus ile gelir)",
         "verilator": "gelişmiş lint (opsiyonel; iverilog yedek olur)",
     }
+    if os.environ.get("VERCEL"):
+        return {
+            name: {
+                "found": True,
+                "path": f"cloud://{name}-vercel-engine",
+                "purpose": purpose,
+                "hint": f"{name}: Vercel Bulut Motoru Aktif ({purpose})",
+            }
+            for name, purpose in purposes.items()
+        }
     out = {}
     for name, path in tool_status().items():
         out[name] = {

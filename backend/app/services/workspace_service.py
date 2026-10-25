@@ -241,10 +241,16 @@ def include_dirs(root: Path) -> List[str]:
 
 # ---- recent projects ----
 def load_recent() -> List[str]:
+    items: List[str] = []
     try:
-        return [p for p in json.loads(RECENT_FILE.read_text(encoding="utf-8")) if Path(p).is_dir()]
+        items = [p for p in json.loads(RECENT_FILE.read_text(encoding="utf-8")) if Path(p).is_dir()]
     except (OSError, ValueError):
-        return []
+        pass
+    if not items:
+        ex_root = Path(__file__).resolve().parent.parent.parent.parent / "examples"
+        if ex_root.is_dir():
+            items = [str(d) for d in sorted(ex_root.iterdir()) if d.is_dir()]
+    return items
 
 
 def add_recent(path: str) -> None:

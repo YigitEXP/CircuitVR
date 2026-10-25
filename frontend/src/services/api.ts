@@ -66,26 +66,44 @@ export const ws = {
   },
   schematic: (path: string, top?: string, flatten = false) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.schematic(path, top));
-    return api.post<{ schematic: SchematicGraph }>(`${P}/schematic`, { path, top, flatten }).then((r) => r.data.schematic);
+    return api
+      .post<{ schematic: SchematicGraph }>(`${P}/schematic`, { path, top, flatten })
+      .then((r) => r.data.schematic)
+      .catch(() => cloudFallback.schematic(path, top));
   },
   simulate: (path: string, tb_top: string, max_time_ns: number) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.simulate());
-    return api.post<SimResult>(`${P}/simulate`, { path, tb_top, max_time_ns }).then((r) => r.data);
+    return api
+      .post<SimResult>(`${P}/simulate`, { path, tb_top, max_time_ns })
+      .then((r) => (r.data.missing_tool ? cloudFallback.simulate() : r.data))
+      .catch(() => cloudFallback.simulate());
   },
   lint: (path: string, top?: string) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.lint(path));
-    return api.post<LintResult>(`${P}/lint`, { path, top }).then((r) => r.data);
+    return api
+      .post<LintResult>(`${P}/lint`, { path, top })
+      .then((r) => (!r.data.success && !r.data.tool ? cloudFallback.lint(path) : r.data))
+      .catch(() => cloudFallback.lint(path));
   },
   synth: (path: string, top: string) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.synth(path, top));
-    return api.post<SynthStats>(`${P}/synth-stats`, { path, top }).then((r) => r.data);
+    return api
+      .post<SynthStats>(`${P}/synth-stats`, { path, top })
+      .then((r) => (!r.data.success ? cloudFallback.synth(path, top) : r.data))
+      .catch(() => cloudFallback.synth(path, top));
   },
   optimize: (path: string, top?: string) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.optimize(path));
-    return api.post<OptimizationReport>(`${P}/optimize`, { path, top }).then((r) => r.data);
+    return api
+      .post<OptimizationReport>(`${P}/optimize`, { path, top })
+      .then((r) => r.data)
+      .catch(() => cloudFallback.optimize(path));
   },
   wave: (path: string, vcd?: string) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.wave());
-    return api.post<WaveData>(`${P}/wave`, { path, vcd }).then((r) => r.data);
+    return api
+      .post<WaveData>(`${P}/wave`, { path, vcd })
+      .then((r) => r.data)
+      .catch(() => cloudFallback.wave());
   },
 };

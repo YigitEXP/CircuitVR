@@ -55,7 +55,8 @@ export default function TopBar(p: Props) {
   const sel = 'px-2 py-1 rounded-md bg-darker/80 border border-slate-700 text-xs max-w-[150px] hover:border-slate-500 focus:border-primary outline-none';
 
   const t = p.tools;
-  const ok = (n: string) => !!t?.[n]?.found;
+  const isCloud = p.info.root.startsWith('demo://') || p.info.root.startsWith('cloud://');
+  const ok = (n: string) => isCloud || !!t?.[n]?.found;
   const canSim = ok('iverilog') && ok('vvp');
   const canSchem = ok('yosys');
   const canLint = ok('verilator') || ok('iverilog');

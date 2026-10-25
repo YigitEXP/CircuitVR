@@ -1,0 +1,295 @@
+from pathlib import Path
+from typing import List, Optional
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
+
+from app.services import eda_service, workspace_service as ws
+from app.services.optimizer_service import analyze_optimizations
+from app.services.schematic_service import build_schematic
+from app.services.vcd_parser import parse_vcd
+from app.services.yosys_service import YosysService
+
+router = APIRouter()
+yosys_service = YosysService()
+UPLOAD_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "workspaces"
+
+
+class PathReq(BaseModel):
+    path: str
+
+
+class FileReq(BaseModel):
+    path: str
+    file: str
+
+
+class SaveReq(FileReq):
+    content: str
+
+
+class SchematicReq(BaseModel):
+    path: str
+    top: Optional[str] = None
+    flatten: bool = False
+
+
+class SimReq(BaseModel):
+    path: str
+    tb_top: str
+    max_time_ns: int = 10000
+
+
+class LintReq(BaseModel):
+    path: str
+    top: Optional[str] = None
+
+
+class WaveReq(BaseModel):
+    path: str
+    vcd: str = ".circuitvr/build/wave.vcd"
+
+
+def _root(path: str) -> Path:
+    try:
+        return ws.resolve_root(path)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@router.get("/tools")
+def tools():
+    return eda_service.tool_report()
+
+
+@router.post("/install-yosys-wasm")
+def install_yosys_wasm():
+    """Küçük (~17MB) alternatif: Yosys'i pip paketi (yowasp-yosys) olarak kur."""
+    import subprocess
+    import sys
+    res = subprocess.run([sys.executable, "-m", "pip", "install", "yowasp-yosys"],
+                         capture_output=True, text=True, timeout=600)
+    if res.returncode != 0:
+        raise HTTPException(500, (res.stderr or res.stdout)[-800:])
+    return {"installed": True, "tools": eda_service.tool_report()}
+
+
+@router.post("/install-all-tools")
+def install_all_tools():
+    """Tüm eksik EDA araçlarını (Yosys, Icarus Verilog, Verilator) otomatik indirir ve kurar."""
+    from app.services.installer_service import install_all_missing_tools
+    return install_all_missing_tools()
+
+
+@router.get("/recent")
+def recent():
+    return {"recent": ws.load_recent()}
+
+
+@router.get("/listdir")
+def listdir(path: str = ""):
+    """Uygulama içi klasör gezgini (backend yerel makinede çalışır)."""
+    import os
+    if not path:
+        entries = []
+        if os.name == "nt":
+            import string
+            entries = [{"name": f"{d}:", "path": f"{d}:\\"} for d in string.ascii_uppercase if Path(f"{d}:\\").exists()]
+        home = Path.home()
+        entries.insert(0, {"name": "Ana klasör", "path": str(home)})
+        for sub in ("Desktop", "Masaüstü", "Documents", "Belgeler", "Downloads", "İndirilenler"):
+            if (home / sub).is_dir():
+                entries.append({"name": sub, "path": str(home / sub)})
+        return {"path": "", "parent": None, "dirs": entries, "is_project": False}
+    p = Path(path).expanduser()
+    if not p.is_dir():
+        raise HTTPException(404, f"Klasör bulunamadı: {path}")
+    dirs = []
+    try:
+        with os.scandir(p) as it:  # scandir: girdi türünü ekstra stat olmadan verir (OneDrive'da hızlı)
+            for c in it:
+                try:
+                    if c.is_dir(follow_symlinks=False) and not c.name.startswith((".", "$")):
+                        dirs.append({"name": c.name, "path": c.path})
+                except OSError:
+                    continue  # korumalı/bozuk bağlantı noktaları atlanır
+    except PermissionError:
+        raise HTTPException(403, "Bu klasöre erişim izni yok")
+    dirs.sort(key=lambda d: d["name"].lower())
+    parent = str(p.parent) if p.parent != p else ""
+    is_project = any((p / d).is_dir() for d in ("rtl", "tb"))
+    return {"path": str(p), "parent": parent, "dirs": dirs, "is_project": is_project}
+
+
+@router.post("/upload")
+async def upload(
+    files: List[UploadFile] = File(...),
+    paths: List[str] = Form(...),
+    name: str = Form("upload"),
+    root: Optional[str] = Form(None),
+):
+    """Dosya/klasör yükle; rtl/ ve tb/ yapısına otomatik yerleştirir."""
+    import re as _re
+    if len(files) != len(paths):
+        raise HTTPException(400, "files ve paths sayısı eşleşmiyor")
+    if root:
+        target = _root(root)
+    else:
+        safe = _re.sub(r"[^\w.\- ]", "_", name).strip() or "upload"
+        target = UPLOAD_ROOT / safe
+        target.mkdir(parents=True, exist_ok=True)
+        target = target.resolve()
+    saved = 0
+    for f, rel in zip(files, paths):
+        parts = [x for x in Path(rel.replace("\\", "/")).parts if x not in ("", ".", "..", "/")]
+        if not parts or Path(parts[-1]).suffix.lower() not in ws.HDL_EXT | ws.HEADER_EXT:
+            continue
+        lowered = {x.lower() for x in parts[:-1]}
+        if not (lowered & (ws.RTL_DIRS | ws.TB_DIRS)):
+            parts = [ws._classify(Path(*parts))] + parts
+        dest = ws.resolve_in(target, "/".join(parts))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(await f.read())
+        saved += 1
+    if saved == 0:
+        raise HTTPException(400, "Geçerli .sv/.v/.svh/.vh dosyası bulunamadı")
+    ws.add_recent(str(target))
+    return ws.scan_workspace(str(target))
+
+
+@router.post("/browse")
+def browse():
+    """Native klasör seçici (Windows: PowerShell; diğer: tkinter)."""
+    import os
+    import subprocess
+    if os.name == "nt":
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$f=New-Object System.Windows.Forms.Form;$f.TopMost=$true;$f.ShowInTaskbar=$false;"
+            "$f.StartPosition='CenterScreen';$f.Opacity=0;$f.Show();"
+            "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+            "$d.Description='Proje klasörünü seçin';"
+            "if($d.ShowDialog($f) -eq 'OK'){[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $d.SelectedPath};$f.Close()"
+        )
+        try:
+            res = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", script],
+                                 capture_output=True, text=True, timeout=300, encoding="utf-8", errors="replace")
+            return {"path": res.stdout.strip() or None}
+        except Exception as e:
+            raise HTTPException(501, f"Klasör seçici açılamadı ({e})")
+    try:
+        import tkinter
+        from tkinter import filedialog
+        tk = tkinter.Tk()
+        tk.withdraw()
+        tk.attributes("-topmost", True)
+        chosen = filedialog.askdirectory(title="Proje klasörünü seçin")
+        tk.destroy()
+        return {"path": chosen or None}
+    except Exception as e:
+        raise HTTPException(501, f"Klasör seçici açılamadı ({e})")
+
+
+@router.post("/open")
+def open_workspace(req: PathReq):
+    root = _root(req.path)
+    result = ws.scan_workspace(str(root))
+    ws.add_recent(str(root))
+    return result
+
+
+@router.post("/create")
+def create_workspace(req: PathReq):
+    try:
+        result = ws.create_project(req.path)
+    except OSError as e:
+        raise HTTPException(500, f"Proje oluşturulamadı: {e}")
+    ws.add_recent(result["root"])
+    return result
+
+
+@router.get("/fingerprint")
+def fingerprint(path: str):
+    return {"fingerprint": ws.fingerprint(_root(path))}
+
+
+@router.post("/file")
+def read_file(req: FileReq):
+    root = _root(req.path)
+    try:
+        p = ws.resolve_in(root, req.file)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if not p.is_file():
+        raise HTTPException(404, "Dosya bulunamadı")
+    return {"file": req.file, "content": p.read_text(encoding="utf-8", errors="replace")}
+
+
+@router.put("/file")
+def save_file(req: SaveReq):
+    root = _root(req.path)
+    try:
+        p = ws.resolve_in(root, req.file)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if p.suffix.lower() not in ws.HDL_EXT | ws.HEADER_EXT:
+        raise HTTPException(400, "Sadece SystemVerilog/Verilog dosyaları kaydedilebilir")
+    p.write_text(req.content, encoding="utf-8", newline="")
+    return {"saved": True, "fingerprint": ws.fingerprint(root)}
+
+
+@router.post("/schematic")
+def schematic(req: SchematicReq):
+    root = _root(req.path)
+    files = ws.compile_files(root, groups=("rtl",))
+    if not files:
+        raise HTTPException(400, "rtl/ klasöründe derlenecek dosya yok")
+    try:
+        netlist = yosys_service.generate_netlist(files, req.top, flatten=req.flatten)
+        return {"schematic": build_schematic(netlist, req.top), "success": True}
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/simulate")
+def simulate(req: SimReq):
+    root = _root(req.path)
+    files = ws.compile_files(root, groups=("rtl", "tb"))
+    return eda_service.simulate(root, files, ws.include_dirs(root), req.tb_top, req.max_time_ns)
+
+
+@router.post("/lint")
+def lint(req: LintReq):
+    root = _root(req.path)
+    files = ws.compile_files(root, groups=("rtl", "tb"))
+    return eda_service.lint(root, files, ws.include_dirs(root), req.top)
+
+
+@router.post("/synth-stats")
+def synth_stats(req: LintReq):
+    if not req.top:
+        raise HTTPException(400, "Top modül gerekli")
+    root = _root(req.path)
+    files = ws.compile_files(root, groups=("rtl",))
+    stats = eda_service.synth_stats(root, files, req.top)
+    stats["optimization"] = analyze_optimizations(root, files, req.top, stats)
+    return stats
+
+
+@router.post("/optimize")
+def optimize(req: LintReq):
+    root = _root(req.path)
+    files = ws.compile_files(root, groups=("rtl",))
+    return analyze_optimizations(root, files, req.top)
+
+
+@router.post("/wave")
+def wave(req: WaveReq):
+    root = _root(req.path)
+    try:
+        p = ws.resolve_in(root, req.vcd)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if not p.is_file():
+        raise HTTPException(404, "VCD yok; önce simülasyon çalıştırın")
+    return parse_vcd(str(p))

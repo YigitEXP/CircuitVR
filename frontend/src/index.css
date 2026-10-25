@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-darker text-slate-100 antialiased font-sans;
+    background-image:
+      radial-gradient(1200px 600px at 85% -10%, rgba(79,140,255,0.10), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(34,211,238,0.06), transparent 60%);
+    background-attachment: fixed;
+  }
+  button, select, input { @apply transition-all duration-150; }
+  button:not(:disabled) { @apply cursor-pointer; }
+  button:disabled { @apply cursor-not-allowed; }
+  ::selection { background: rgba(79,140,255,0.35); }
+
+  /* İnce, koyu kaydırma çubukları */
+  * { scrollbar-width: thin; scrollbar-color: #2b3a58 transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb { background: #243049; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+  *::-webkit-scrollbar-thumb:hover { background: #34466b; background-clip: content-box; border: 2px solid transparent; }
+  *::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-lg shadow-sm
+           hover:shadow-glow disabled:opacity-40 disabled:shadow-none;
+  }
+  .btn-secondary {
+    @apply bg-surface hover:bg-slate-700 text-slate-100 font-medium py-2 px-4 rounded-lg border border-slate-700
+           disabled:opacity-40;
+  }
+  .card {
+    @apply bg-surface/80 rounded-xl border border-slate-700/80 p-6 backdrop-blur-md shadow-glass;
+  }
+  .input-field {
+    @apply bg-darker/80 border border-slate-700 rounded-lg px-4 py-2 text-slate-100
+           placeholder:text-slate-500 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50;
+  }
+  /* Glassmorphism yüzeyler */
+  .glass {
+    @apply bg-dark/70 backdrop-blur-xl border-slate-700/70 shadow-glass;
+  }
+  .glass-strong {
+    @apply bg-dark/90 backdrop-blur-2xl border border-slate-600/60 shadow-glass rounded-xl;
+  }
+  .tool-btn {
+    @apply px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5
+           disabled:opacity-35 disabled:grayscale;
+  }
+}

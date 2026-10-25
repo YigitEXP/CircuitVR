@@ -15,7 +15,7 @@
 [![Backend](https://img.shields.io/badge/Backend-FastAPI%20%2B%20Python%203.11%2B-f59e0b?style=for-the-badge)](#)
 [![Language](https://img.shields.io/badge/i18n-T%C3%BCrk%C3%A7e%20%7C%20English-ec4899?style=for-the-badge)](#)
 
-[**🇹🇷 Türkçe Dokümantasyon**](#-türkçe-dokümantasyon) • [**🇬🇧 English Documentation**](#-english-documentation) • [**⚡ Tek Tık Kurulum**](#-1-hızlı-ve-tam-otomatik-kurulum-sıfır-ayar) • [**🚀 Vercel & Bulut Dağıtımı**](#-6-github--vercel-bulut-dağıtımı)
+[**🇹🇷 Türkçe Dokümantasyon**](#-türkçe-dokümantasyon) • [**⚡ Tek Tık Kurulum**](#-1-hızlı-ve-tam-otomatik-kurulum-sıfır-ayar) • [**🚀 Vercel & Bulut Dağıtımı**](#-6-github--vercel-bulut-dağıtımı)
 
 </div>
 

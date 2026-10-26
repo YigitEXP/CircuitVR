@@ -308,10 +308,28 @@ class EdgeAiReq(BaseModel):
     frac_bits: int = 6
     rounding: str = "round"
     stimulus: str = "ecg"
+    custom_signal: Optional[List[float]] = None
     activation: str = "relu"
     threshold: float = 0.45
     clock_mhz: float = 100.0
     reuse_factor: int = 1
+    target_mode: str = "preset"
+    custom_rtl_file: Optional[str] = None
+    module_name: Optional[str] = None
+
+
+@router.post("/edge-ai/inspect-rtl")
+def edge_ai_inspect_rtl(req: FileReq):
+    from app.services.edge_ai_service import inspect_workspace_rtl
+    root = _root(req.path)
+    try:
+        p = ws.resolve_in(root, req.file)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if not p.is_file():
+        raise HTTPException(404, f"RTL dosyası bulunamadı: {req.file}")
+    text = p.read_text(encoding="utf-8", errors="replace")
+    return inspect_workspace_rtl(text, req.file)
 
 
 @router.post("/edge-ai/analyze")
@@ -323,20 +341,46 @@ def edge_ai_analyze(req: EdgeAiReq):
 
 @router.post("/edge-ai/generate")
 def edge_ai_generate(req: EdgeAiReq):
-    from app.services.edge_ai_service import generate_edge_ai_rtl
+    from app.services.edge_ai_service import generate_edge_ai_rtl, inspect_workspace_rtl
     payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
-    gen = generate_edge_ai_rtl(payload)
+    detected_rtl = None
+    root = None
+
     if req.path and not req.path.startswith(("demo://", "cloud://")):
         root = _root(req.path)
+        if req.custom_rtl_file:
+            try:
+                rtl_cand = ws.resolve_in(root, req.custom_rtl_file)
+                if rtl_cand.is_file():
+                    detected_rtl = inspect_workspace_rtl(
+                        rtl_cand.read_text(encoding="utf-8", errors="replace"),
+                        req.custom_rtl_file,
+                    )
+            except Exception:
+                detected_rtl = None
+
+    gen = generate_edge_ai_rtl(payload, detected_rtl=detected_rtl)
+
+    if root is not None:
         rtl_dir = root / "rtl" if (root / "rtl").is_dir() or not (root / "RTL").is_dir() else (root / "RTL")
         tb_dir = root / "tb" if (root / "tb").is_dir() or not (root / "TB").is_dir() else (root / "TB")
         rtl_dir.mkdir(parents=True, exist_ok=True)
         tb_dir.mkdir(parents=True, exist_ok=True)
-        rtl_p = rtl_dir / "conv1d_biosignal.sv"
-        tb_p = tb_dir / "tb_conv1d_biosignal.sv"
-        rtl_p.write_text(gen["rtl_code"], encoding="utf-8", newline="")
-        tb_p.write_text(gen["tb_code"], encoding="utf-8", newline="")
-        gen["rtl_file"] = rtl_p.relative_to(root).as_posix()
-        gen["tb_file"] = tb_p.relative_to(root).as_posix()
+
+        if gen.get("target_mode") == "custom_tb_only" and detected_rtl:
+            tb_p = tb_dir / f"{gen['tb_module']}.sv"
+            tb_p.write_text(gen["tb_code"], encoding="utf-8", newline="")
+            gen["rtl_file"] = detected_rtl["file"]
+            gen["tb_file"] = tb_p.relative_to(root).as_posix()
+        else:
+            mod_name = gen.get("top_module", "conv1d_biosignal")
+            tb_mod = gen.get("tb_module", f"tb_{mod_name}")
+            rtl_p = rtl_dir / f"{mod_name}.sv"
+            tb_p = tb_dir / f"{tb_mod}.sv"
+            rtl_p.write_text(gen["rtl_code"], encoding="utf-8", newline="")
+            tb_p.write_text(gen["tb_code"], encoding="utf-8", newline="")
+            gen["rtl_file"] = rtl_p.relative_to(root).as_posix()
+            gen["tb_file"] = tb_p.relative_to(root).as_posix()
+
         gen["workspace"] = ws.scan_workspace(str(root))
     return gen

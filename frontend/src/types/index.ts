@@ -126,11 +126,36 @@ export interface EdgeAiConfig {
   int_bits: number;
   frac_bits: number;
   rounding: 'round' | 'trunc';
-  stimulus: 'ecg' | 'eeg' | 'sine_noise';
+  stimulus: 'ecg' | 'eeg' | 'sine_noise' | 'custom';
+  custom_signal?: number[];
   activation: 'relu' | 'leaky_relu' | 'sigmoid_lut' | 'none';
   threshold: number;
   clock_mhz: number;
   reuse_factor: number;
+  target_mode?: 'preset' | 'custom_tb_only' | 'custom_rtl_and_tb';
+  custom_rtl_file?: string;
+  module_name?: string;
+}
+
+export interface InspectedRtlInfo {
+  file: string;
+  module_name: string;
+  is_vhdl: boolean;
+  data_w: number;
+  int_bits: number;
+  frac_bits: number;
+  clk_port?: string | null;
+  rst_port?: string | null;
+  rst_active_low: boolean;
+  valid_in_port?: string | null;
+  data_in_ports: string[];
+  valid_out_port?: string | null;
+  data_out_port: string;
+  flag_out_port?: string | null;
+  has_rtl_weights: boolean;
+  detected_weights: number[];
+  summary_tr: string;
+  summary_en: string;
 }
 
 export interface QuantizedWeightItem {

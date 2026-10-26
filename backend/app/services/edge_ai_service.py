@@ -4,11 +4,16 @@ Solves the top pain points of FPGA / Edge AI hardware engineers:
 1. Fixed-Point Quantization Explorer (Qm.n) with SQNR (dB), MSE, Clipping & Float-vs-Fixed visualization.
 2. Automatic Binary-Point & MAC Accumulator Bit-Growth Calculator (preventing overflow/truncation bugs).
 3. Hardware Roofline & FPGA Silicon Estimator (DSP48 cliff, LUTs, FFs, Latency in ns/us, Throughput).
-4. One-Click Synthesizable 1D-CNN / Biosignal Filter RTL + Bit-Exact Golden ECG/EEG Testbench Generator.
+4. Dual Workflow:
+   - Mode A (Preset Templates): Test with ready-made Biomedical 1D-CNN / FIR templates (conv1d_biosignal).
+   - Mode B (Custom RTL & Custom Model): Auto-detect the user's own workspace RTL (.sv/.v/.vhd) ports,
+     bit-widths, and weights, import custom Python/PyTorch/CSV/JSON weights & signals, and generate a
+     Golden Testbench wired directly to the user's own RTL module (or synthesize a custom-named RTL core).
 """
 import math
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 PRESET_KERNELS: Dict[str, Dict[str, Any]] = {
@@ -45,15 +50,17 @@ PRESET_KERNELS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def _generate_biosignal(kind: str, n: int = 64) -> List[float]:
-    """Generate a realistic 64-sample physiological signal (ECG P-QRS-T + ectopic spike or EEG Alpha + seizure spike)."""
+def _generate_biosignal(kind: str, n: int = 64, custom_signal: Optional[List[float]] = None) -> List[float]:
+    """Generate a 64-sample physiological signal or normalize user-supplied custom signal samples."""
+    if kind == "custom" and custom_signal and len(custom_signal) >= 4:
+        cleaned = [round(max(-127.0, min(127.0, float(v))), 5) for v in custom_signal[:256]]
+        return cleaned
+
     samples: List[float] = []
     for i in range(n):
         t = i / float(n)
-        # Subtle high-frequency EMG/powerline noise
         noise = 0.04 * math.sin(2.0 * math.pi * 11.0 * t)
         if kind == "eeg":
-            # Baseline 10Hz alpha wave + sudden epileptic spike-and-wave burst around samples 22..30 and 46..52
             alpha = 0.18 * math.sin(2.0 * math.pi * 4.0 * t)
             spike1 = 0.82 * math.exp(-((i - 25) ** 2) / 3.5) - 0.35 * math.exp(-((i - 29) ** 2) / 6.0)
             spike2 = 0.76 * math.exp(-((i - 48) ** 2) / 3.0) - 0.30 * math.exp(-((i - 52) ** 2) / 5.5)
@@ -61,7 +68,6 @@ def _generate_biosignal(kind: str, n: int = 64) -> List[float]:
         elif kind == "sine_noise":
             val = 0.55 * math.sin(2.0 * math.pi * 2.0 * t) + 0.18 * math.sin(2.0 * math.pi * 15.0 * t)
         else:
-            # ECG: two heartbeats at i=18 (normal QRS) and i=44 (premature ventricular contraction / high-amplitude QRS)
             p1 = 0.12 * math.exp(-((i - 12) ** 2) / 4.0)
             q1 = -0.15 * math.exp(-((i - 16) ** 2) / 1.5)
             r1 = 0.85 * math.exp(-((i - 18) ** 2) / 1.8)
@@ -105,7 +111,6 @@ def _apply_activation_float(x: float, act: str) -> float:
     if act == "leaky_relu":
         return x if x >= 0.0 else x * 0.125
     if act == "sigmoid_lut":
-        # Piecewise-linear hardware approximation of sigmoid(x) mapped to [0, 1]
         return max(0.0, min(1.0, 0.5 + 0.25 * x))
     return x
 
@@ -114,7 +119,7 @@ def _apply_activation_fixed(q_val: int, act: str, frac_bits: int, q_min: int, q_
     if act == "relu":
         return max(0, q_val)
     if act == "leaky_relu":
-        return q_val if q_val >= 0 else (q_val >> 3)  # * 0.125 via arithmetic right shift
+        return q_val if q_val >= 0 else (q_val >> 3)
     if act == "sigmoid_lut":
         half = 1 << (frac_bits - 1) if frac_bits >= 1 else 1
         approx = half + (q_val >> 2)
@@ -128,6 +133,181 @@ def _sv_signed_lit(q_int: int, width: int) -> str:
     return f"{width}'sd{q_int}"
 
 
+def inspect_workspace_rtl(text: str, rel_path: str = "rtl/top.sv") -> Dict[str, Any]:
+    """Parse a user's existing SV/Verilog/VHDL file to extract module name, ports, Qm.n bit-widths, and weights."""
+    clean = re.sub(r"//[^\n]*", "", text)
+    clean = re.sub(r"/\*.*?\*/", "", clean, flags=re.S)
+    ext = Path(rel_path).suffix.lower()
+
+    is_vhdl = ext in {".vhd", ".vhdl"}
+    module_name = Path(rel_path).stem
+    params: Dict[str, int] = {}
+
+    if is_vhdl:
+        clean_vhd = re.sub(r"--[^\n]*", "", text)
+        m_ent = re.search(r"\bentity\s+([a-zA-Z_]\w*)\s+is\b", clean_vhd, re.I)
+        if m_ent:
+            module_name = m_ent.group(1)
+        for gm in re.finditer(r"([a-zA-Z_]\w*)\s*:\s*(?:integer|natural|positive)\s*:=\s*(\d+)", clean_vhd, re.I):
+            params[gm.group(1).upper()] = int(gm.group(2))
+    else:
+        m_mod = re.search(r"\bmodule\s+([a-zA-Z_]\w*)", clean)
+        if m_mod:
+            module_name = m_mod.group(1)
+        for pm in re.finditer(r"\b(?:parameter|localparam)\b[^;=]*?\b([a-zA-Z_]\w*)\s*=\s*(\d+)\b", clean):
+            params[pm.group(1).upper()] = int(pm.group(2))
+
+    data_w = (
+        params.get("DATA_W")
+        or params.get("WIDTH")
+        or params.get("DATA_WIDTH")
+        or params.get("N")
+        or 8
+    )
+    frac_w = (
+        params.get("FRAC_W")
+        or params.get("FRAC_BITS")
+        or params.get("Q_FRAC")
+        or max(2, min(6, data_w - 2))
+    )
+    int_w = max(1, data_w - frac_w)
+
+    # Parse ports
+    inputs: List[Dict[str, Any]] = []
+    outputs: List[Dict[str, Any]] = []
+
+    if is_vhdl:
+        clean_vhd = re.sub(r"--[^\n]*", "", text)
+        for pm in re.finditer(
+            r"([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)\s*:\s*(in|out|inout)\s+([^;)\r\n]+)",
+            clean_vhd,
+            re.I,
+        ):
+            names = [n.strip() for n in pm.group(1).split(",") if n.strip()]
+            direction = pm.group(2).lower()
+            t_str = pm.group(3)
+            w = 1
+            m_vec = re.search(r"\(\s*([a-zA-Z0-9_]+)\s*(?:-\s*1)?\s+downto\s+0\s*\)", t_str, re.I)
+            if m_vec:
+                tok = m_vec.group(1)
+                if tok.isdigit():
+                    w = int(tok) + (0 if "- 1" in m_vec.group(0) or "-1" in m_vec.group(0) else 1)
+                else:
+                    w = params.get(tok.upper(), data_w)
+            for n in names:
+                item = {"name": n, "width": w}
+                if direction == "in":
+                    inputs.append(item)
+                else:
+                    outputs.append(item)
+    else:
+        for pm in re.finditer(
+            r"\b(input|output|inout)\b\s*(?:wire|reg|logic)?\s*(?:signed|unsigned)?\s*(?:\[\s*([^:\]]+)\s*:\s*0\s*\])?\s*([a-zA-Z_]\w*)",
+            clean,
+        ):
+            direction = pm.group(1)
+            msb = (pm.group(2) or "").strip()
+            name = pm.group(3)
+            w = 1
+            if msb:
+                m_param = re.match(r"([a-zA-Z_]\w*)\s*-\s*1", msb)
+                if m_param:
+                    w = params.get(m_param.group(1).upper(), data_w)
+                elif msb.isdigit():
+                    w = int(msb) + 1
+                else:
+                    w = data_w
+            item = {"name": name, "width": w}
+            if direction == "input":
+                inputs.append(item)
+            elif direction == "output":
+                outputs.append(item)
+
+    clk_port = next((p["name"] for p in inputs if re.search(r"clk|clock", p["name"], re.I)), None)
+    rst_port = next((p["name"] for p in inputs if re.search(r"rst|reset", p["name"], re.I)), None)
+    rst_active_low = bool(rst_port and re.search(r"_n$|neg|n$", rst_port, re.I))
+    valid_in_port = next(
+        (p["name"] for p in inputs if p["width"] == 1 and re.search(r"valid|en|start|ce|stb", p["name"], re.I)),
+        None,
+    )
+    vec_inputs = [
+        p for p in inputs
+        if p["name"] not in {clk_port, rst_port, valid_in_port} and p["width"] > 1
+    ]
+    if not vec_inputs:
+        vec_inputs = [p for p in inputs if p["name"] not in {clk_port, rst_port, valid_in_port}]
+
+    if vec_inputs and "DATA_W" not in params and "WIDTH" not in params:
+        data_w = vec_inputs[0]["width"]
+        frac_w = min(frac_w, max(1, data_w - 1))
+        int_w = max(1, data_w - frac_w)
+
+    valid_out_port = next(
+        (p["name"] for p in outputs if p["width"] == 1 and re.search(r"valid|done|ready", p["name"], re.I)),
+        None,
+    )
+    flag_out_port = next(
+        (p["name"] for p in outputs if p["width"] == 1 and p["name"] != valid_out_port),
+        None,
+    )
+    vec_outputs = [p for p in outputs if p["width"] > 1]
+    data_out_port = vec_outputs[0]["name"] if vec_outputs else (outputs[0]["name"] if outputs else "feature_out")
+
+    # Extract any fixed-point or float weights defined in the RTL (e.g., W_0, W_1, COEFF_0, TAP_0)
+    scale = float(1 << frac_w)
+    extracted_weights: List[Tuple[int, float]] = []
+    for wm in re.finditer(
+        r"\b(?:W|WEIGHT|COEFF|TAP|KERNEL|B|H)_?(\d+)\s*=\s*([+-]?)\s*(?:\d+'s?d)?(\d+(?:\.\d+)?)",
+        clean,
+        re.I,
+    ):
+        idx = int(wm.group(1))
+        sign = -1.0 if wm.group(2) == "-" else 1.0
+        raw_str = wm.group(3)
+        if "." in raw_str:
+            val_f = sign * float(raw_str)
+        else:
+            val_f = round((sign * int(raw_str)) / scale, 6)
+        extracted_weights.append((idx, val_f))
+
+    extracted_weights.sort(key=lambda x: x[0])
+    weights_list = [w for _, w in extracted_weights[:16]]
+    has_rtl_weights = len(weights_list) > 0
+
+    return {
+        "file": rel_path,
+        "module_name": module_name,
+        "is_vhdl": is_vhdl,
+        "data_w": data_w,
+        "int_bits": int_w,
+        "frac_bits": frac_w,
+        "clk_port": clk_port,
+        "rst_port": rst_port,
+        "rst_active_low": rst_active_low,
+        "valid_in_port": valid_in_port,
+        "data_in_ports": [p["name"] for p in vec_inputs],
+        "valid_out_port": valid_out_port,
+        "data_out_port": data_out_port,
+        "flag_out_port": flag_out_port,
+        "has_rtl_weights": has_rtl_weights,
+        "detected_weights": weights_list,
+        "summary_tr": (
+            f"'{rel_path}' içindeki `{module_name}` modülü algılandı: "
+            f"Q{int_w}.{frac_w} ({data_w}-bit), "
+            f"Giriş: {', '.join(p['name'] for p in vec_inputs) or 'yok'}, "
+            f"Çıkış: {data_out_port}"
+            + (f", {len(weights_list)} adet gömülü ağırlık (W_0..W_{len(weights_list)-1}) okundu." if has_rtl_weights else " (Genel RTL modülü — dışarıdan model/sinyal ile test edilebilir).")
+        ),
+        "summary_en": (
+            f"Detected module `{module_name}` in '{rel_path}': "
+            f"Q{int_w}.{frac_w} ({data_w}-bit), "
+            f"Inputs: {', '.join(p['name'] for p in vec_inputs) or 'none'}, "
+            f"Output: {data_out_port}"
+            + (f", extracted {len(weights_list)} embedded weights." if has_rtl_weights else " (General RTL module — ready for custom Golden TB).")
+        ),
+    }
+
+
 def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     weights: List[float] = [float(x) for x in cfg.get("weights", PRESET_KERNELS["ecg_qrs_1dcnn"]["weights"])][:16]
     if not weights:
@@ -137,6 +317,7 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     frac_bits = max(1, min(24, int(cfg.get("frac_bits", 6))))
     rounding = str(cfg.get("rounding", "round"))
     stimulus = str(cfg.get("stimulus", "ecg"))
+    custom_signal = cfg.get("custom_signal")
     activation = str(cfg.get("activation", "relu"))
     threshold = float(cfg.get("threshold", 0.45))
     clock_mhz = max(1.0, min(1000.0, float(cfg.get("clock_mhz", 100.0))))
@@ -192,7 +373,7 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     acc_width = prod_width + guard_bits
 
     # 3. Run Bit-Exact Biosignal 1D-CNN Emulation vs FP64 Reference
-    sig_float = _generate_biosignal(stimulus, n=64)
+    sig_float = _generate_biosignal(stimulus, n=64, custom_signal=custom_signal)
     sig_q_int: List[int] = []
     sig_q_float: List[float] = []
     for s in sig_float:
@@ -214,12 +395,10 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
         win_fp = [sig_float[t_idx]] + win_fp[:-1]
         win_fx = [sig_q_int[t_idx]] + win_fx[:-1]
 
-        # Float reference
         acc_fp = sum(win_fp[j] * weights[j] for j in range(k_len)) + bias
         y_fp = _apply_activation_float(acc_fp, activation)
         out_fp_list.append(round(y_fp, 5))
 
-        # Bit-exact hardware fixed-point MAC
         acc_fx = sum(win_fx[j] * q_weights_int[j] for j in range(k_len)) + bias_acc_shifted
         shifted = (acc_fx + round_offset) >> frac_bits
         sat = max(q_min, min(q_max, shifted))
@@ -238,7 +417,6 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     throughput_msps = round(clock_mhz / float(cycles_per_sample), 2)
     gops = round((2.0 * k_len * throughput_msps) / 1000.0, 3)
 
-    # Xilinx DSP48 cliff: <= 6 bits typically synthesized in LUTs; 7..18 bits uses 1 DSP48; >18 bits uses 2..4 DSP48s
     if total_bits <= 6:
         dsp_blocks = 0
         mult_lut_each = total_bits * total_bits * 2
@@ -312,15 +490,147 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def generate_edge_ai_rtl(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate synthesizable SystemVerilog 1D-CNN / Biosignal accelerator + Bit-Exact Golden Testbench."""
+def _generate_tb_for_custom_rtl(
+    analysis: Dict[str, Any],
+    detected: Dict[str, Any],
+) -> Tuple[str, str]:
+    """Generate a Golden Testbench specifically wired to the user's own RTL module and ports."""
+    mod_name = detected["module_name"]
+    tb_mod = f"tb_{mod_name}"
+    w_bits = detected.get("data_w") or analysis["total_bits"]
+    clk_p = detected.get("clk_port")
+    rst_p = detected.get("rst_port")
+    rst_low = detected.get("rst_active_low", True)
+    valid_in_p = detected.get("valid_in_port")
+    data_in_ports = detected.get("data_in_ports") or ["sample_in"]
+    valid_out_p = detected.get("valid_out_port")
+    data_out_p = detected.get("data_out_port") or "feature_out"
+    flag_out_p = detected.get("flag_out_port")
+
+    in_q_ints = analysis["series"]["input_q_int"]
+    out_fx_ints = analysis["series"]["output_fx_int"]
+    n_samples = len(in_q_ints)
+
+    stim_lines = "\n".join(
+        f"        stim_in[{idx}] = {_sv_signed_lit(v, w_bits)}; golden_out[{idx}] = {_sv_signed_lit(out_fx_ints[idx], w_bits)};"
+        for idx, v in enumerate(in_q_ints)
+    )
+
+    port_conns: List[str] = []
+    if clk_p:
+        port_conns.append(f"        .{clk_p}(clk)")
+    if rst_p:
+        port_conns.append(f"        .{rst_p}({'rst_n' if rst_low else 'rst'})")
+    if valid_in_p:
+        port_conns.append(f"        .{valid_in_p}(valid_in)")
+    for idx, inp in enumerate(data_in_ports):
+        if idx == 0:
+            port_conns.append(f"        .{inp}(sample_in)")
+        else:
+            port_conns.append(f"        .{inp}('0)")
+    if valid_out_p:
+        port_conns.append(f"        .{valid_out_p}(valid_out)")
+    if data_out_p:
+        port_conns.append(f"        .{data_out_p}(feature_out)")
+    if flag_out_p and flag_out_p != data_out_p:
+        port_conns.append(f"        .{flag_out_p}(anomaly_flag)")
+
+    port_map_str = ",\n".join(port_conns)
+
+    tb_code = f"""// ============================================================================
+// Custom RTL Bit-Exact Golden Biosignal ({analysis['series']['stimulus'].upper()}) Testbench
+// Target User Module : {mod_name} ({detected.get('file', 'rtl')})
+// Fixed-Point Format : {analysis['q_format']} ({w_bits}-bit)
+// ============================================================================
+`timescale 1ns/1ps
+
+module {tb_mod};
+    localparam int DATA_W = {w_bits};
+    localparam int N_VEC  = {n_samples};
+
+    logic                     clk = 1'b0;
+    logic                     rst_n = 1'b0;
+    logic                     rst = 1'b1;
+    logic                     valid_in = 1'b0;
+    logic signed [DATA_W-1:0] sample_in = '0;
+    logic                     valid_out;
+    logic signed [DATA_W-1:0] feature_out;
+    logic signed [DATA_W-1:0] golden_expected = '0;
+    logic                     anomaly_flag;
+
+    logic signed [DATA_W-1:0] stim_in    [0:N_VEC-1];
+    logic signed [DATA_W-1:0] golden_out [0:N_VEC-1];
+    int err_count = 0;
+
+    {mod_name} dut (
+{port_map_str}
+    );
+
+    always #5 clk = ~clk;
+
+    initial begin
+{stim_lines}
+
+        #12;
+        rst_n = 1'b1;
+        rst   = 1'b0;
+        for (int i = 0; i < N_VEC; i++) begin
+            @(negedge clk);
+            valid_in        = 1'b1;
+            sample_in       = stim_in[i];
+            golden_expected = golden_out[i];
+            @(posedge clk);
+            #1;
+            if (feature_out !== golden_expected) begin
+                $display("[USER-RTL vs GOLDEN] sample=%0d: RTL=%0d, Golden=%0d", i, feature_out, golden_expected);
+                err_count++;
+            end
+        end
+        @(negedge clk);
+        valid_in = 1'b0;
+        #20;
+        $display("============================================================");
+        $display(" User Module ({mod_name}) Co-Sim Complete: %0d/%0d Bit-Exact Matches (Errors: %0d)", N_VEC - err_count, N_VEC, err_count);
+        $display("============================================================");
+        $finish;
+    end
+endmodule
+"""
+    return tb_mod, tb_code
+
+
+def generate_edge_ai_rtl(cfg: Dict[str, Any], detected_rtl: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Generate either:
+    - Custom TB only (`target_mode == 'custom_tb_only'`) wired to the user's existing RTL module, OR
+    - Full synthesizable 1D-CNN/DSP RTL + Golden TB (`target_mode == 'preset'` or `'custom_rtl_and_tb'`).
+    """
     analysis = analyze_edge_ai(cfg)
+    target_mode = str(cfg.get("target_mode", "preset"))
+
+    if target_mode == "custom_tb_only" and detected_rtl:
+        tb_mod, tb_code = _generate_tb_for_custom_rtl(analysis, detected_rtl)
+        return {
+            "target_mode": "custom_tb_only",
+            "rtl_file": detected_rtl["file"],
+            "tb_file": f"tb/{tb_mod}.sv",
+            "top_module": detected_rtl["module_name"],
+            "tb_module": tb_mod,
+            "rtl_code": "",
+            "tb_code": tb_code,
+            "analysis": analysis,
+        }
+
+    raw_mod_name = str(cfg.get("module_name") or "").strip()
+    mod_name = re.sub(r"[^a-zA-Z0-9_]", "_", raw_mod_name) if raw_mod_name else "conv1d_biosignal"
+    if not re.match(r"^[a-zA-Z_]", mod_name):
+        mod_name = f"cnn_{mod_name}"
+    tb_mod = f"tb_{mod_name}"
+
     w_bits = analysis["total_bits"]
     f_bits = analysis["frac_bits"]
     i_bits = analysis["int_bits"]
     bg = analysis["bit_growth"]
     acc_w = bg["acc_width"]
-    prod_w = bg["prod_width"]
     w_table = analysis["weights_table"]
     k_len = len(w_table)
     act = str(cfg.get("activation", "relu"))
@@ -343,11 +653,11 @@ def generate_edge_ai_rtl(cfg: Dict[str, Any]) -> Dict[str, Any]:
     ]
     shift_chain = "\n".join(shift_lines)
 
-    tap_Terms = ["(sample_in * W_0)"] + [
+    tap_terms = ["(sample_in * W_0)"] + [
         f"(x_win[{idx-1}] * W_{idx})"
         for idx in range(1, k_len)
     ]
-    mult_terms = " + ".join(tap_Terms)
+    mult_terms = " + ".join(tap_terms)
 
     if act == "relu":
         act_logic = f"        y_act = (y_sat < 0) ? {w_bits}'sd0 : y_sat;"
@@ -365,14 +675,14 @@ def generate_edge_ai_rtl(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     rtl_code = f"""// ============================================================================
 // Auto-Generated by CircuitVR Edge AI & Biosignal Co-Design Studio
-// Architecture : {k_len}-Tap 1D-CNN / DSP Streaming Convolution Accelerator
+// Module       : {mod_name} ({k_len}-Tap 1D-CNN / DSP Streaming Accelerator)
 // Fixed-Point  : Q{i_bits}.{f_bits} ({w_bits}-bit signed, scale=2^{f_bits}={1 << f_bits})
 // Accumulator  : {bg['acc_q']} ({bg['formula']})
 // Activation   : {act.upper()} | Anomaly Threshold: {analysis['threshold_float']} ({thresh_int})
 // ============================================================================
 `timescale 1ns/1ps
 
-module conv1d_biosignal #(
+module {mod_name} #(
     parameter int DATA_W = {w_bits},
     parameter int FRAC_W = {f_bits},
     parameter int ACC_W  = {acc_w}
@@ -454,7 +764,7 @@ endmodule
 // ============================================================================
 `timescale 1ns/1ps
 
-module tb_conv1d_biosignal;
+module {tb_mod};
     localparam int DATA_W = {w_bits};
     localparam int N_VEC  = {n_samples};
 
@@ -471,7 +781,7 @@ module tb_conv1d_biosignal;
     logic signed [DATA_W-1:0] golden_out [0:N_VEC-1];
     int err_count = 0;
 
-    conv1d_biosignal dut (
+    {mod_name} dut (
         .clk(clk),
         .rst_n(rst_n),
         .valid_in(valid_in),
@@ -511,10 +821,11 @@ endmodule
 """
 
     return {
-        "rtl_file": "rtl/conv1d_biosignal.sv",
-        "tb_file": "tb/tb_conv1d_biosignal.sv",
-        "top_module": "conv1d_biosignal",
-        "tb_module": "tb_conv1d_biosignal",
+        "target_mode": target_mode,
+        "rtl_file": f"rtl/{mod_name}.sv",
+        "tb_file": f"tb/{tb_mod}.sv",
+        "top_module": mod_name,
+        "tb_module": tb_mod,
         "rtl_code": rtl_code,
         "tb_code": tb_code,
         "analysis": analysis,

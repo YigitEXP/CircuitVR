@@ -1,6 +1,6 @@
 import axios from 'axios';
 import {
-  DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
+  DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, InspectedRtlInfo, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
 } from '../types';
 import { cloudFallback } from './cloudFallback';
 
@@ -105,6 +105,13 @@ export const ws = {
       .post<WaveData>(`${P}/wave`, { path, vcd })
       .then((r) => r.data)
       .catch(() => cloudFallback.wave());
+  },
+  edgeAiInspectRtl: (path: string, file: string) => {
+    if (isCloudPath(path)) return Promise.resolve(cloudFallback.edgeAiInspectRtl(path, file));
+    return api
+      .post<InspectedRtlInfo>(`${P}/edge-ai/inspect-rtl`, { path, file })
+      .then((r) => r.data)
+      .catch(() => cloudFallback.edgeAiInspectRtl(path, file));
   },
   edgeAiAnalyze: (cfg: EdgeAiConfig) => {
     if (isCloudPath(cfg.path)) return Promise.resolve(cloudFallback.edgeAiAnalyze(cfg));

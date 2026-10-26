@@ -1,5 +1,5 @@
 import {
-  EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, LintResult, OptimizationReport, OptimizationSuggestion, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
+  EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, InspectedRtlInfo, LintResult, OptimizationReport, OptimizationSuggestion, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
 } from '../types';
 import { UploadItem } from './api';
 
@@ -461,18 +461,24 @@ export const cloudFallback = {
     const accWidth = 2 * totalBits + guardBits;
 
     const sigFloat: number[] = [];
-    for (let i = 0; i < 64; i++) {
-      const t = i / 64;
-      const noise = 0.04 * Math.sin(2 * Math.PI * 11 * t);
-      let v = 0;
-      if (cfg.stimulus === 'eeg') {
-        v = 0.18 * Math.sin(2 * Math.PI * 4 * t) + 0.82 * Math.exp(-((i - 25) ** 2) / 3.5) + 0.76 * Math.exp(-((i - 48) ** 2) / 3.0) + noise;
-      } else if (cfg.stimulus === 'sine_noise') {
-        v = 0.55 * Math.sin(2 * Math.PI * 2 * t) + 0.18 * Math.sin(2 * Math.PI * 15 * t);
-      } else {
-        v = 0.85 * Math.exp(-((i - 18) ** 2) / 1.8) - 0.22 * Math.exp(-((i - 20) ** 2) / 1.8) + 0.94 * Math.exp(-((i - 44) ** 2) / 2.2) + noise;
+    if (cfg.stimulus === 'custom' && cfg.custom_signal && cfg.custom_signal.length >= 4) {
+      for (const v of cfg.custom_signal.slice(0, 256)) {
+        sigFloat.push(Number(Math.max(-127, Math.min(127, Number(v) || 0)).toFixed(5)));
       }
-      sigFloat.push(Number(Math.max(-0.98, Math.min(0.98, v)).toFixed(5)));
+    } else {
+      for (let i = 0; i < 64; i++) {
+        const t = i / 64;
+        const noise = 0.04 * Math.sin(2 * Math.PI * 11 * t);
+        let v = 0;
+        if (cfg.stimulus === 'eeg') {
+          v = 0.18 * Math.sin(2 * Math.PI * 4 * t) + 0.82 * Math.exp(-((i - 25) ** 2) / 3.5) + 0.76 * Math.exp(-((i - 48) ** 2) / 3.0) + noise;
+        } else if (cfg.stimulus === 'sine_noise') {
+          v = 0.55 * Math.sin(2 * Math.PI * 2 * t) + 0.18 * Math.sin(2 * Math.PI * 15 * t);
+        } else {
+          v = 0.85 * Math.exp(-((i - 18) ** 2) / 1.8) - 0.22 * Math.exp(-((i - 20) ** 2) / 1.8) + 0.94 * Math.exp(-((i - 44) ** 2) / 2.2) + noise;
+        }
+        sigFloat.push(Number(Math.max(-0.98, Math.min(0.98, v)).toFixed(5)));
+      }
     }
 
     const sigQInt = sigFloat.map((s) => qVal(s).qi);
@@ -560,14 +566,61 @@ export const cloudFallback = {
       },
     };
   },
+  edgeAiInspectRtl(path: string, file: string): InspectedRtlInfo {
+    const text = this.readFile(path, file);
+    const isVhdl = file.toLowerCase().endsWith('.vhd') || file.toLowerCase().endsWith('.vhdl');
+    const modMatch = isVhdl
+      ? text.match(/\bentity\s+([a-zA-Z_]\w*)\s+is\b/i)
+      : text.match(/\bmodule\s+([a-zA-Z_]\w*)/);
+    const modName = modMatch ? modMatch[1] : file.split('/').pop()?.replace(/\.\w+$/, '') || 'top';
+    const wParam = text.match(/\b(?:DATA_W|WIDTH|N)\s*(?::=|=)\s*(\d+)/i);
+    const fParam = text.match(/\b(?:FRAC_W|FRAC_BITS)\s*(?::=|=)\s*(\d+)/i);
+    const dataW = wParam ? Number(wParam[1]) : 8;
+    const fracW = fParam ? Number(fParam[1]) : Math.min(6, Math.max(2, dataW - 2));
+    const intW = Math.max(1, dataW - fracW);
+    const scale = 1 << fracW;
+    const weights: number[] = [];
+    const wRe = /\b(?:W|WEIGHT|COEFF|TAP)_?(\d+)\s*=\s*([+-]?)\s*(?:\d+'s?d)?(\d+(?:\.\d+)?)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = wRe.exec(text)) !== null) {
+      const sign = m[2] === '-' ? -1 : 1;
+      const v = m[3].includes('.') ? sign * Number(m[3]) : Number(((sign * Number(m[3])) / scale).toFixed(6));
+      weights.push(v);
+    }
+    return {
+      file,
+      module_name: modName,
+      is_vhdl: isVhdl,
+      data_w: dataW,
+      int_bits: intW,
+      frac_bits: fracW,
+      clk_port: 'clk',
+      rst_port: 'rst_n',
+      rst_active_low: true,
+      valid_in_port: 'valid_in',
+      data_in_ports: ['sample_in'],
+      valid_out_port: 'valid_out',
+      data_out_port: 'feature_out',
+      flag_out_port: 'anomaly_flag',
+      has_rtl_weights: weights.length > 0,
+      detected_weights: weights,
+      summary_tr: `'${file}' içindeki \`${modName}\` modülü algılandı: Q${intW}.${fracW} (${dataW}-bit)` + (weights.length ? `, ${weights.length} gömülü ağırlık okundu.` : ' (Genel RTL modülü).'),
+      summary_en: `Detected module \`${modName}\` in '${file}': Q${intW}.${fracW} (${dataW}-bit).`,
+    };
+  },
   edgeAiGenerate(cfg: EdgeAiConfig): EdgeAiGenerated {
     const analysis = this.edgeAiAnalyze(cfg);
     const w = analysis.total_bits;
     const f = analysis.frac_bits;
     const accW = analysis.bit_growth.acc_width;
+    const rawMod = (cfg.module_name || '').trim().replace(/[^a-zA-Z0-9_]/g, '_');
+    const modName = rawMod || 'conv1d_biosignal';
+    const tbMod = `tb_${modName}`;
+    const rtlFile = cfg.target_mode === 'custom_tb_only' && cfg.custom_rtl_file ? cfg.custom_rtl_file : `rtl/${modName}.sv`;
+    const tbFile = `tb/${tbMod}.sv`;
     const rtlCode = `// Auto-Generated by CircuitVR Edge AI & Biosignal Co-Design Studio (${analysis.q_format})
 \`timescale 1ns/1ps
-module conv1d_biosignal #(parameter int DATA_W = ${w}, parameter int FRAC_W = ${f}, parameter int ACC_W = ${accW}) (
+module ${modName} #(parameter int DATA_W = ${w}, parameter int FRAC_W = ${f}, parameter int ACC_W = ${accW}) (
     input  logic                     clk,
     input  logic                     rst_n,
     input  logic                     valid_in,
@@ -591,10 +644,10 @@ ${analysis.weights_table.map((it) => `    localparam signed [DATA_W-1:0] W_${it.
 endmodule
 `;
     const tbCode = `\`timescale 1ns/1ps
-module tb_conv1d_biosignal;
+module ${tbMod};
     logic clk = 0, rst_n = 0, valid_in = 0, valid_out, anomaly_flag;
     logic signed [${w - 1}:0] sample_in = 0, feature_out;
-    conv1d_biosignal dut (.*);
+    ${modName} dut (.*);
     always #5 clk = ~clk;
     initial begin #12 rst_n = 1; valid_in = 1; #200 $finish; end
 endmodule
@@ -602,16 +655,18 @@ endmodule
     let workspace: WorkspaceInfo | undefined;
     if (cfg.path) {
       const vw = ensureLoaded(cfg.path);
-      vw.files['rtl/conv1d_biosignal.sv'] = rtlCode;
-      vw.files['tb/tb_conv1d_biosignal.sv'] = tbCode;
+      if (cfg.target_mode !== 'custom_tb_only') {
+        vw.files[rtlFile] = rtlCode;
+      }
+      vw.files[tbFile] = tbCode;
       workspace = buildWorkspace(cfg.path, vw.info.name, vw.files).info;
     }
     return {
-      rtl_file: 'rtl/conv1d_biosignal.sv',
-      tb_file: 'tb/tb_conv1d_biosignal.sv',
-      top_module: 'conv1d_biosignal',
-      tb_module: 'tb_conv1d_biosignal',
-      rtl_code: rtlCode,
+      rtl_file: rtlFile,
+      tb_file: tbFile,
+      top_module: modName,
+      tb_module: tbMod,
+      rtl_code: cfg.target_mode === 'custom_tb_only' ? '' : rtlCode,
       tb_code: tbCode,
       analysis,
       workspace,

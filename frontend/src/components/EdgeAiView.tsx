@@ -1,14 +1,14 @@
-import { useEffect, useState } from 'react';
+import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import {
-  BrainCircuit, Cpu, Activity, Sparkles, ArrowRight, CheckCircle2, AlertTriangle, Play, Workflow, Code2, Loader2,
+  BrainCircuit, Cpu, Activity, Sparkles, ArrowRight, CheckCircle2, AlertTriangle, Play, Workflow, Code2, Loader2, Upload, FileCode2, FolderSearch, RefreshCw,
 } from 'lucide-react';
-import { EdgeAiAnalysis, EdgeAiConfig, WorkspaceInfo } from '../types';
+import { EdgeAiAnalysis, EdgeAiConfig, InspectedRtlInfo, WorkspaceInfo } from '../types';
 import { errMsg, ws } from '../services/api';
 import { useI18n } from '../i18n';
 
 interface Props {
   info: WorkspaceInfo;
-  onInjected: (updated: WorkspaceInfo | undefined, rtlFile: string, rtlCode: string, topMod: string, tbMod: string) => void;
+  onInjected: (updated: WorkspaceInfo | undefined, targetFile: string, targetCode: string, topMod: string, tbMod: string) => void;
   onRunSim: () => void;
   onRunSchematic: () => void;
 }
@@ -152,6 +152,17 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
   const { lang } = useI18n();
   const isTr = lang === 'tr';
 
+  // Two distinct workflow modes: 'preset' (Ready-made template) vs 'custom' (User's own RTL / Custom uploaded model)
+  const rtlFiles = info.files.filter((f) => f.group === 'rtl' && !f.is_header);
+  const [workflowMode, setWorkflowMode] = useState<'preset' | 'custom'>('preset');
+  const [selectedRtlFile, setSelectedRtlFile] = useState<string>(rtlFiles[0]?.path || '');
+  const [inspectedRtl, setInspectedRtl] = useState<InspectedRtlInfo | null>(null);
+  const [inspecting, setInspecting] = useState(false);
+  const [customModuleName, setCustomModuleName] = useState<string>('my_edge_cnn');
+  const [customSignalText, setCustomSignalText] = useState<string>('');
+  const [uploadNotice, setUploadNotice] = useState<string>('');
+  const modelFileRef = useRef<HTMLInputElement>(null);
+
   const [cfg, setCfg] = useState<EdgeAiConfig>({
     path: info.root,
     ...PRESETS.ecg_qrs.cfg,
@@ -161,6 +172,46 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
   const [generating, setGenerating] = useState(false);
   const [injectedMsg, setInjectedMsg] = useState('');
   const [err, setErr] = useState('');
+
+  // Keep selectedRtlFile synced when workspace changes
+  useEffect(() => {
+    if (rtlFiles.length > 0 && !rtlFiles.some((f) => f.path === selectedRtlFile)) {
+      setSelectedRtlFile(rtlFiles[0].path);
+    }
+  }, [info.files, selectedRtlFile]);
+
+  // Auto-inspect the user's selected RTL file when in 'custom' mode
+  const inspectRtl = async (rtlPath: string, applyDetectedWeights = true) => {
+    if (!rtlPath) return;
+    setInspecting(true);
+    setErr('');
+    try {
+      const res = await ws.edgeAiInspectRtl(info.root, rtlPath);
+      setInspectedRtl(res);
+      setCustomModuleName(res.module_name);
+      if (applyDetectedWeights) {
+        setCfg((prev) => ({
+          ...prev,
+          int_bits: res.int_bits,
+          frac_bits: res.frac_bits,
+          weights: res.has_rtl_weights && res.detected_weights.length > 0 ? res.detected_weights : prev.weights,
+        }));
+        if (res.has_rtl_weights && res.detected_weights.length > 0) {
+          setWeightsText(res.detected_weights.join(', '));
+        }
+      }
+    } catch (e) {
+      setErr(errMsg(e));
+    } finally {
+      setInspecting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (workflowMode === 'custom' && selectedRtlFile) {
+      inspectRtl(selectedRtlFile, true);
+    }
+  }, [workflowMode, selectedRtlFile, info.root]);
 
   useEffect(() => {
     let active = true;
@@ -182,6 +233,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
     setWeightsText(p.cfg.weights.join(', '));
     setCfg({ path: info.root, ...p.cfg });
     setInjectedMsg('');
+    setUploadNotice('');
   };
 
   const onWeightsBlur = () => {
@@ -195,19 +247,123 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
     }
   };
 
-  const handleGenerate = async () => {
+  const onCustomSignalBlur = () => {
+    const parsed = customSignalText
+      .replace(/[\[\]]/g, '')
+      .split(/[\s,;]+/)
+      .map((s) => Number(s.trim()))
+      .filter((n) => !Number.isNaN(n));
+    if (parsed.length >= 4) {
+      setCfg((c) => ({ ...c, stimulus: 'custom', custom_signal: parsed.slice(0, 256) }));
+    }
+  };
+
+  const handleModelFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setErr('');
+    setUploadNotice('');
+    try {
+      const text = await file.text();
+      if (file.name.toLowerCase().endsWith('.json')) {
+        const j = JSON.parse(text);
+        if (Array.isArray(j)) {
+          const nums = j.map(Number).filter((n) => !Number.isNaN(n));
+          if (nums.length <= 16) {
+            setWeightsText(nums.join(', '));
+            setCfg((c) => ({ ...c, weights: nums }));
+            setUploadNotice(isTr ? `✓ ${file.name}: ${nums.length} adet ağırlık yüklendi.` : `✓ ${file.name}: Loaded ${nums.length} weights.`);
+          } else {
+            setCustomSignalText(nums.slice(0, 128).join(', '));
+            setCfg((c) => ({ ...c, stimulus: 'custom', custom_signal: nums.slice(0, 256) }));
+            setUploadNotice(isTr ? `✓ ${file.name}: ${nums.length} örnekli özel test sinyali yüklendi.` : `✓ ${file.name}: Loaded ${nums.length}-sample custom signal.`);
+          }
+        } else if (typeof j === 'object' && j !== null) {
+          const nextWeights = Array.isArray(j.weights) ? j.weights.map(Number).filter((n: number) => !Number.isNaN(n)).slice(0, 16) : cfg.weights;
+          const nextSig = Array.isArray(j.signal || j.samples) ? (j.signal || j.samples).map(Number).filter((n: number) => !Number.isNaN(n)).slice(0, 256) : undefined;
+          setWeightsText(nextWeights.join(', '));
+          if (nextSig) setCustomSignalText(nextSig.slice(0, 64).join(', '));
+          setCfg((c) => ({
+            ...c,
+            weights: nextWeights,
+            bias: typeof j.bias === 'number' ? j.bias : c.bias,
+            int_bits: typeof j.int_bits === 'number' ? j.int_bits : c.int_bits,
+            frac_bits: typeof j.frac_bits === 'number' ? j.frac_bits : c.frac_bits,
+            threshold: typeof j.threshold === 'number' ? j.threshold : c.threshold,
+            activation: j.activation || c.activation,
+            stimulus: nextSig ? 'custom' : c.stimulus,
+            custom_signal: nextSig || c.custom_signal,
+          }));
+          setUploadNotice(
+            isTr
+              ? `✓ ${file.name} model konfigürasyonu (${nextWeights.length} ağırlık${nextSig ? ` + ${nextSig.length} sinyal örneği` : ''}) başarıyla içe aktarıldı.`
+              : `✓ Imported ${file.name} (${nextWeights.length} weights${nextSig ? ` + ${nextSig.length} signal samples` : ''}).`
+          );
+        }
+      } else {
+        // CSV / TXT / MEM parser
+        const nums = text
+          .replace(/[\[\]]/g, '')
+          .split(/[\s,;]+/)
+          .map((s) => Number(s.trim()))
+          .filter((n) => !Number.isNaN(n));
+        if (nums.length === 0) {
+          throw new Error(isTr ? 'Dosya içerisinde geçerli sayısal ağırlık veya sinyal verisi bulunamadı.' : 'No numeric weights or signal samples found in file.');
+        }
+        if (nums.length <= 16) {
+          setWeightsText(nums.join(', '));
+          setCfg((c) => ({ ...c, weights: nums }));
+          setUploadNotice(isTr ? `✓ ${file.name}: ${nums.length} adet çekirdek ağırlığı yüklendi.` : `✓ ${file.name}: Loaded ${nums.length} kernel weights.`);
+        } else {
+          setCustomSignalText(nums.slice(0, 64).join(', '));
+          setCfg((c) => ({ ...c, stimulus: 'custom', custom_signal: nums.slice(0, 256) }));
+          setUploadNotice(
+            isTr
+              ? `✓ ${file.name}: ${nums.length} örnekli özel biyosinyal verisi Testbench girişi olarak yüklendi.`
+              : `✓ ${file.name}: Loaded ${nums.length} custom signal samples as Testbench stimulus.`
+          );
+        }
+      }
+    } catch (ex: any) {
+      setErr(ex?.message || String(ex));
+    }
+  };
+
+  const handleGenerate = async (targetMode: 'preset' | 'custom_tb_only' | 'custom_rtl_and_tb') => {
     setGenerating(true);
     setErr('');
     setInjectedMsg('');
     try {
-      const res = await ws.edgeAiGenerate({ ...cfg, path: info.root });
+      const payload: EdgeAiConfig = {
+        ...cfg,
+        path: info.root,
+        target_mode: targetMode,
+        custom_rtl_file: targetMode === 'custom_tb_only' ? selectedRtlFile : undefined,
+        module_name:
+          targetMode === 'preset'
+            ? 'conv1d_biosignal'
+            : targetMode === 'custom_tb_only'
+            ? inspectedRtl?.module_name || customModuleName
+            : customModuleName || 'my_edge_cnn',
+      };
+      const res = await ws.edgeAiGenerate(payload);
       setAnalysis(res.analysis);
-      onInjected(res.workspace, res.rtl_file, res.rtl_code, res.top_module, res.tb_module);
-      setInjectedMsg(
-        isTr
-          ? `✓ ${res.rtl_file} ve ${res.tb_file} (${res.analysis.q_format} bit-exact golden testbench) projeye aktarıldı! Şimdi F5 (Simüle Et) veya F6 (Şematik) çalıştırabilirsiniz.`
-          : `✓ Generated ${res.rtl_file} & ${res.tb_file} (${res.analysis.q_format} bit-exact golden testbench) into workspace! Click Simulate (F5) or Schematic (F6).`
-      );
+      if (targetMode === 'custom_tb_only') {
+        onInjected(res.workspace, res.tb_file, res.tb_code, res.top_module, res.tb_module);
+        setInjectedMsg(
+          isTr
+            ? `✓ Kendi RTL dosyanız (${res.rtl_file} — ${res.top_module}) korundu ve yalnızca ona özel Golden Testbench (${res.tb_file}) üretildi! Şimdi Simüle Et (F5) ile kendi modülünüzü test edebilirsiniz.`
+            : `✓ Preserved your RTL (${res.rtl_file} — ${res.top_module}) and generated its dedicated Golden Testbench (${res.tb_file})! Click Simulate (F5) to verify your module.`
+        );
+      } else {
+        onInjected(res.workspace, res.rtl_file, res.rtl_code, res.top_module, res.tb_module);
+        setInjectedMsg(
+          isTr
+            ? `✓ ${res.rtl_file} ve ${res.tb_file} (${res.analysis.q_format} bit-exact golden testbench) projeye aktarıldı! Şimdi F5 (Simüle Et) veya F6 (Şematik) çalıştırabilirsiniz.`
+            : `✓ Generated ${res.rtl_file} & ${res.tb_file} (${res.analysis.q_format} bit-exact golden testbench) into workspace! Click Simulate (F5) or Schematic (F6).`
+        );
+      }
     } catch (e) {
       setErr(errMsg(e));
     } finally {
@@ -224,38 +380,247 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
 
   return (
     <div className="h-full overflow-auto p-4 space-y-4">
-      {/* Header Banner */}
-      <div className="card border-indigo-500/30 bg-gradient-to-r from-indigo-950/30 via-slate-900/90 to-emerald-950/20 flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <BrainCircuit className="w-5 h-5 text-indigo-400" />
-            <h2 className="font-bold text-base text-slate-100">
+      {/* Header & Mode Switcher */}
+      <div className="card border-indigo-500/30 bg-gradient-to-r from-indigo-950/30 via-slate-900/90 to-emerald-950/20 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <BrainCircuit className="w-5 h-5 text-indigo-400" />
+              <h2 className="font-bold text-base text-slate-100">
+                {isTr
+                  ? 'Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu'
+                  : 'Edge AI & Biosignal (1D-CNN / DSP) Hardware Co-Design Studio'}
+              </h2>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                PyTorch/NumPy Float32 ➔ Fixed-Point Qm.n RTL
+              </span>
+            </div>
+            <p className="text-xs text-slate-400">
               {isTr
-                ? 'Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu'
-                : 'Edge AI & Biosignal (1D-CNN / DSP) Hardware Co-Design Studio'}
-            </h2>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-              PyTorch/NumPy Float32 ➔ Fixed-Point Qm.n RTL
-            </span>
+                ? 'İster hazır biyomedikal 1D-CNN şablonlarıyla sıfırdan donanım sentezleyin, ister kendi yazdığınız RTL (.sv/.v/.vhd) ve kendi model ağırlıklarınızı yükleyip doğrulayın.'
+                : 'Test with ready-made biomedical 1D-CNN templates OR auto-detect your own workspace RTL (.sv/.v/.vhd) and import your own custom model weights/signals.'}
+            </p>
           </div>
-          <p className="text-xs text-slate-400">
-            {isTr
-              ? 'Sabit noktalı (Qm.n) niceleme kaybını (SQNR), MAC akümülatör bit genişlemesini, FPGA DSP48 sınırlarını ve EEG/ECG 1D-CNN donanım hızlandırıcısını bit-doğru (bit-exact) Golden Testbench ile birlikte üretir.'
-              : 'Explore Qm.n quantization SQNR, automatic MAC accumulator bit-growth, FPGA DSP48 cliffs, and synthesize bit-exact 1D-CNN EEG/ECG accelerators with Golden Testbenches.'}
-          </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* 2-Way Mode Selector: Ready-Made Preset vs User's Own RTL/Model */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
           <button
-            onClick={handleGenerate}
+            type="button"
+            onClick={() => {
+              setWorkflowMode('preset');
+              setInjectedMsg('');
+            }}
+            className={`text-left p-3 rounded-xl border transition flex items-start justify-between gap-3 ${
+              workflowMode === 'preset'
+                ? 'bg-indigo-600/20 border-indigo-400 text-white shadow-glow'
+                : 'bg-darker/70 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+            }`}
+          >
+            <div className="space-y-0.5">
+              <div className="text-xs font-bold flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-400" />
+                {isTr ? '1. Hazır Biyomedikal Model & Şablonla Test Et' : '1. Test with Ready-Made Biomedical Templates'}
+              </div>
+              <p className="text-[11px] text-slate-400">
+                {isTr
+                  ? 'Hazır ECG QRS, EEG Spike veya FIR şablonlarından sıfırdan `rtl/conv1d_biosignal.sv` ve `tb/tb_conv1d_biosignal.sv` sentezler.'
+                  : 'Synthesizes standalone `rtl/conv1d_biosignal.sv` & `tb/tb_conv1d_biosignal.sv` from curated ECG/EEG templates.'}
+              </p>
+            </div>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${workflowMode === 'preset' ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+              {isTr ? 'Hazır Model' : 'Preset'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setWorkflowMode('custom');
+              setInjectedMsg('');
+            }}
+            className={`text-left p-3 rounded-xl border transition flex items-start justify-between gap-3 ${
+              workflowMode === 'custom'
+                ? 'bg-emerald-600/20 border-emerald-400 text-white shadow-glow'
+                : 'bg-darker/70 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+            }`}
+          >
+            <div className="space-y-0.5">
+              <div className="text-xs font-bold flex items-center gap-2">
+                <FileCode2 className="w-4 h-4 text-emerald-400" />
+                {isTr ? '2. Kendi RTL Dosyam & Kendi Modelimle Çalış' : '2. Work with My Own RTL & Custom Model'}
+              </div>
+              <p className="text-[11px] text-slate-400">
+                {isTr
+                  ? 'Projendeki mevcut `.sv/.v/.vhd` dosyalarının portlarını/ağırlıklarını algılar veya dışarıdan `.json/.csv` model yükleyip kendi modülüne özel Golden TB üretir.'
+                  : 'Auto-detects your existing `.sv/.v/.vhd` ports & weights or imports `.json/.csv` models to generate a Golden TB for your own RTL.'}
+              </p>
+            </div>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${workflowMode === 'custom' ? 'bg-emerald-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'}`}>
+              {isTr ? 'Kendi Modülüm' : 'Custom RTL'}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* Mode-Specific Action Panel */}
+      {workflowMode === 'preset' ? (
+        <div className="card border-indigo-500/30 bg-indigo-950/15 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs text-slate-300 space-y-0.5">
+            <div className="font-semibold text-indigo-300">
+              {isTr ? 'Hazır Şablon Sentezleyici Modu Aktif' : 'Preset Template Synthesizer Mode Active'}
+            </div>
+            <div className="text-[11px] text-slate-400">
+              {isTr
+                ? 'Aşağıdan hazır ECG/EEG/FIR şablonunu ve Qm.n bit genişliğini seçin; tek tıkla `rtl/conv1d_biosignal.sv` ve `tb/tb_conv1d_biosignal.sv` projenize eklensin.'
+                : 'Choose a preset kernel and Qm.n bit-width below, then generate `rtl/conv1d_biosignal.sv` and `tb/tb_conv1d_biosignal.sv`.'}
+            </div>
+          </div>
+          <button
+            onClick={() => handleGenerate('preset')}
             disabled={generating}
             className="btn-primary text-xs flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 shadow-glow"
           >
             {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            {isTr ? 'RTL + Golden Testbench Üret & Projeye Yükle' : 'Generate RTL + Golden TB into Workspace'}
+            {isTr ? 'Hazır Model RTL + Golden TB Üret (conv1d_biosignal)' : 'Generate Preset RTL + Golden TB (conv1d_biosignal)'}
           </button>
         </div>
-      </div>
+      ) : (
+        <div className="card border-emerald-500/40 bg-emerald-950/10 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+            <div className="text-xs font-semibold text-emerald-300 flex items-center gap-2">
+              <FolderSearch className="w-4 h-4" />
+              {isTr
+                ? 'Projendeki Mevcut RTL Dosyasını Algıla & Dışarıdan Kendi Modelini Yükle'
+                : 'Auto-Detect Workspace RTL & Import Custom Model / Signal'}
+            </div>
+            <input
+              ref={modelFileRef}
+              type="file"
+              accept=".json,.csv,.txt,.mem,.coe"
+              className="hidden"
+              onChange={handleModelFileUpload}
+            />
+            <button
+              type="button"
+              onClick={() => modelFileRef.current?.click()}
+              className="tool-btn bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 text-xs flex items-center gap-1.5"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              {isTr ? 'Dışarıdan Model / Sinyal Yükle (.json, .csv, .txt)' : 'Upload Custom Model / Signal (.json, .csv, .txt)'}
+            </button>
+          </div>
+
+          {uploadNotice && (
+            <div className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 rounded-lg px-3 py-2 font-mono">
+              {uploadNotice}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
+            {/* Left: Existing Workspace RTL Inspector */}
+            <div className="bg-darker/90 border border-slate-800 rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-200">
+                  {isTr ? 'A) Projendeki RTL Dosyasını Seç (.sv / .v / .vhd)' : 'A) Select Your Workspace RTL File (.sv / .v / .vhd)'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => inspectRtl(selectedRtlFile, true)}
+                  disabled={inspecting || !selectedRtlFile}
+                  className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1"
+                >
+                  <RefreshCw className={`w-3 h-3 ${inspecting ? 'animate-spin' : ''}`} />
+                  {isTr ? 'Yeniden Algıla' : 'Re-scan RTL'}
+                </button>
+              </div>
+
+              {rtlFiles.length > 0 ? (
+                <>
+                  <select
+                    value={selectedRtlFile}
+                    onChange={(e) => setSelectedRtlFile(e.target.value)}
+                    className="input-field text-xs py-1.5 font-mono"
+                  >
+                    {rtlFiles.map((f) => (
+                      <option key={f.path} value={f.path}>
+                        {f.path}
+                      </option>
+                    ))}
+                  </select>
+
+                  {inspectedRtl && (
+                    <div className="text-[11px] bg-slate-900/90 border border-slate-800 rounded p-2.5 space-y-1 font-mono">
+                      <div className="text-emerald-300 font-semibold">
+                        ✓ {isTr ? inspectedRtl.summary_tr : inspectedRtl.summary_en}
+                      </div>
+                      <div className="text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
+                        <span>Modül: <strong className="text-slate-200">{inspectedRtl.module_name}</strong></span>
+                        <span>Clk/Rst: <strong className="text-slate-200">{inspectedRtl.clk_port || '—'} / {inspectedRtl.rst_port || '—'}</strong></span>
+                        <span>Giriş: <strong className="text-sky-300">{inspectedRtl.data_in_ports.join(', ') || '—'}</strong></span>
+                        <span>Çıkış: <strong className="text-amber-300">{inspectedRtl.data_out_port}</strong></span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-[11px] text-amber-300 bg-amber-950/20 border border-amber-500/30 rounded p-2">
+                  {isTr
+                    ? 'Projenin rtl/ klasöründe henüz dosya yok. Sol üstten kendi .sv/.v/.vhd dosyanızı yükleyebilir veya sağdaki butonla kendi modelinizden yeni RTL üretebilirsiniz.'
+                    : 'No files in rtl/ yet. Upload your .sv/.v/.vhd file or synthesize a new custom RTL module on the right.'}
+                </div>
+              )}
+            </div>
+
+            {/* Right: Two Distinct Generation Actions for Custom Mode */}
+            <div className="bg-darker/90 border border-slate-800 rounded-lg p-3 space-y-2.5 flex flex-col justify-between">
+              <div className="space-y-1.5">
+                <span className="font-semibold text-slate-200 block">
+                  {isTr ? 'B) Kendi Dosyaların İçin Ne Üretilsin?' : 'B) Choose Custom Generation Target'}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-400 whitespace-nowrap">
+                    {isTr ? 'Hedef Modül Adı:' : 'Target Module Name:'}
+                  </span>
+                  <input
+                    type="text"
+                    value={customModuleName}
+                    onChange={(e) => setCustomModuleName(e.target.value)}
+                    className="input-field text-xs py-1 font-mono"
+                    placeholder="my_edge_cnn"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleGenerate('custom_tb_only')}
+                  disabled={generating || !selectedRtlFile}
+                  className="btn-primary text-xs flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 py-2"
+                >
+                  {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  {isTr
+                    ? `Sadece Seçili RTL'im (${inspectedRtl?.module_name || 'dut'}) İçin Golden Testbench Üret (RTL'ime Dokunma)`
+                    : `Generate Golden TB Only for My RTL (${inspectedRtl?.module_name || 'dut'})`}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleGenerate('custom_rtl_and_tb')}
+                  disabled={generating}
+                  className="tool-btn justify-center text-xs py-2 bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/40"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {isTr
+                    ? `Kendi Ağırlıklarımdan Yeni RTL (rtl/${customModuleName || 'my_edge_cnn'}.sv) + Golden TB Sentezle`
+                    : `Synthesize New Custom RTL (rtl/${customModuleName || 'my_edge_cnn'}.sv) + Golden TB`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {injectedMsg && (
         <div className="bg-emerald-950/30 border border-emerald-500/40 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs text-emerald-200">
@@ -282,22 +647,25 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
         <div className="card space-y-3">
           <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
             <Activity className="w-4 h-4 text-sky-400" />
-            {isTr ? '1. 1D-CNN Çekirdek Ağırlıkları & Biyosinyal' : '1. 1D-CNN Kernel Weights & Biosignal'}
+            {isTr ? '1. 1D-CNN Çekirdek Ağırlıkları & Giriş Sinyali' : '1. 1D-CNN Kernel Weights & Input Stimulus'}
           </div>
-          <div className="space-y-1.5">
-            <label className="text-[11px] text-slate-400">{isTr ? 'Hazır Biyomedikal / DSP Şablonu' : 'Biomedical / DSP Preset'}</label>
-            <div className="grid grid-cols-1 gap-1.5">
-              {Object.entries(PRESETS).map(([k, p]) => (
-                <button
-                  key={k}
-                  onClick={() => applyPreset(k)}
-                  className="text-left px-2.5 py-1.5 rounded-lg bg-darker hover:bg-indigo-500/15 border border-slate-700/80 hover:border-indigo-500/40 text-xs text-slate-200 transition"
-                >
-                  {isTr ? p.labelTr : p.labelEn}
-                </button>
-              ))}
+
+          {workflowMode === 'preset' && (
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-slate-400">{isTr ? 'Hazır Biyomedikal / DSP Şablonu' : 'Biomedical / DSP Preset'}</label>
+              <div className="grid grid-cols-1 gap-1.5">
+                {Object.entries(PRESETS).map(([k, p]) => (
+                  <button
+                    key={k}
+                    onClick={() => applyPreset(k)}
+                    className="text-left px-2.5 py-1.5 rounded-lg bg-darker hover:bg-indigo-500/15 border border-slate-700/80 hover:border-indigo-500/40 text-xs text-slate-200 transition"
+                  >
+                    {isTr ? p.labelTr : p.labelEn}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="space-y-1">
             <label className="text-[11px] text-slate-400">
@@ -324,6 +692,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                 <option value="ecg">{isTr ? 'ECG (QRS + Aritmi)' : 'ECG (QRS + Arrhythmia)'}</option>
                 <option value="eeg">{isTr ? 'EEG (Alpha + Epileptik Diken)' : 'EEG (Alpha + Seizure Spike)'}</option>
                 <option value="sine_noise">{isTr ? 'Sinüs + Yüksek Frekans Gürültü' : 'Sine + HF Noise'}</option>
+                <option value="custom">{isTr ? 'Kendi Sinyal Verim (Özel Dizi)' : 'My Custom Signal Array'}</option>
               </select>
             </label>
             <label className="space-y-1">
@@ -340,6 +709,22 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               </select>
             </label>
           </div>
+
+          {cfg.stimulus === 'custom' && (
+            <div className="space-y-1">
+              <label className="text-[11px] text-emerald-300">
+                {isTr ? 'Özel Testbench Giriş Sinyali Örnekleri (virgülle)' : 'Custom Testbench Input Samples (comma-separated)'}
+              </label>
+              <textarea
+                rows={2}
+                value={customSignalText}
+                onChange={(e) => setCustomSignalText(e.target.value)}
+                onBlur={onCustomSignalBlur}
+                className="input-field font-mono text-xs"
+                placeholder="0.1, 0.25, 0.85, -0.2, 0.05, ..."
+              />
+            </div>
+          )}
         </div>
 
         {/* Column 2: Fixed-Point Qm.n & Bit-Growth */}
@@ -531,8 +916,8 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
             <SignalPlot
               title={
                 isTr
-                  ? `Giriş Biyosinyali (${analysis.series.stimulus.toUpperCase()} — 64 Örnek)`
-                  : `Input Biosignal (${analysis.series.stimulus.toUpperCase()} — 64 Samples)`
+                  ? `Giriş Biyosinyali (${analysis.series.stimulus.toUpperCase()} — ${analysis.series.input_float.length} Örnek)`
+                  : `Input Biosignal (${analysis.series.stimulus.toUpperCase()} — ${analysis.series.input_float.length} Samples)`
               }
               primary={analysis.series.input_float}
               secondary={analysis.series.input_q_float}

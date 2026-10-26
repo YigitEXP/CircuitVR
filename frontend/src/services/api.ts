@@ -1,6 +1,6 @@
 import axios from 'axios';
 import {
-  DirListing, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
+  DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
 } from '../types';
 import { cloudFallback } from './cloudFallback';
 
@@ -105,5 +105,19 @@ export const ws = {
       .post<WaveData>(`${P}/wave`, { path, vcd })
       .then((r) => r.data)
       .catch(() => cloudFallback.wave());
+  },
+  edgeAiAnalyze: (cfg: EdgeAiConfig) => {
+    if (isCloudPath(cfg.path)) return Promise.resolve(cloudFallback.edgeAiAnalyze(cfg));
+    return api
+      .post<EdgeAiAnalysis>(`${P}/edge-ai/analyze`, cfg)
+      .then((r) => r.data)
+      .catch(() => cloudFallback.edgeAiAnalyze(cfg));
+  },
+  edgeAiGenerate: (cfg: EdgeAiConfig) => {
+    if (isCloudPath(cfg.path)) return Promise.resolve(cloudFallback.edgeAiGenerate(cfg));
+    return api
+      .post<EdgeAiGenerated>(`${P}/edge-ai/generate`, cfg)
+      .then((r) => r.data)
+      .catch(() => cloudFallback.edgeAiGenerate(cfg));
   },
 };

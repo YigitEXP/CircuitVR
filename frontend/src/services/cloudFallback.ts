@@ -1,5 +1,5 @@
 import {
-  LintResult, OptimizationReport, OptimizationSuggestion, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
+  EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, LintResult, OptimizationReport, OptimizationSuggestion, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
 } from '../types';
 import { UploadItem } from './api';
 
@@ -407,6 +407,214 @@ export const cloudFallback = {
         s2: [[0, '1'], [12, '0']],
         s3: [[0, '00'], [15, '01'], [25, '10'], [35, '11'], [45, '01'], [55, '10']],
       },
+    };
+  },
+  edgeAiAnalyze(cfg: EdgeAiConfig): EdgeAiAnalysis {
+    const weights = cfg.weights.length ? cfg.weights : [-0.125, -0.25, 0.375, 0.875, 0.375, -0.25, -0.125];
+    const intBits = Math.max(1, Math.min(16, cfg.int_bits || 2));
+    const fracBits = Math.max(1, Math.min(24, cfg.frac_bits || 6));
+    const totalBits = intBits + fracBits;
+    const scale = 1 << fracBits;
+    const qMin = -(1 << (totalBits - 1));
+    const qMax = (1 << (totalBits - 1)) - 1;
+
+    const qVal = (v: number) => {
+      const scaled = v * scale;
+      const raw = cfg.rounding === 'trunc' ? Math.floor(scaled) : Math.round(scaled);
+      const clipped = raw < qMin || raw > qMax;
+      const qi = Math.max(qMin, Math.min(qMax, raw));
+      return { qi, qf: qi / scale, clipped };
+    };
+
+    const sqnr = (orig: number[], q: number[]) => {
+      const sp = orig.reduce((a, x) => a + x * x, 0) / Math.max(orig.length, 1);
+      const ep = orig.reduce((a, x, i) => a + (x - q[i]) ** 2, 0) / Math.max(orig.length, 1);
+      if (ep <= 1e-15) return 99.9;
+      return Number(Math.max(0, Math.min(99.9, 10 * Math.log10(sp / ep))).toFixed(2));
+    };
+
+    let clippedCount = 0;
+    const wInt: number[] = [];
+    const wFloat: number[] = [];
+    const weightsTable = weights.map((w, index) => {
+      const { qi, qf, clipped } = qVal(w);
+      if (clipped) clippedCount++;
+      wInt.push(qi);
+      wFloat.push(qf);
+      const twos = (qi + (1 << totalBits)) % (1 << totalBits);
+      return {
+        index,
+        float_val: Number(w.toFixed(6)),
+        quant_float: Number(qf.toFixed(6)),
+        quant_int: qi,
+        abs_err: Number(Math.abs(w - qf).toFixed(6)),
+        clipped,
+        hex: `0x${twos.toString(16).toUpperCase().padStart(Math.ceil(totalBits / 4), '0')}`,
+        sv_lit: qi < 0 ? `-${totalBits}'sd${Math.abs(qi)}` : `${totalBits}'sd${qi}`,
+      };
+    });
+
+    const bQ = qVal(cfg.bias || 0);
+    const tQ = qVal(cfg.threshold || 0.45);
+    const kLen = weights.length;
+    const guardBits = Math.max(1, Math.ceil(Math.log2(Math.max(kLen + 1, 2))));
+    const accWidth = 2 * totalBits + guardBits;
+
+    const sigFloat: number[] = [];
+    for (let i = 0; i < 64; i++) {
+      const t = i / 64;
+      const noise = 0.04 * Math.sin(2 * Math.PI * 11 * t);
+      let v = 0;
+      if (cfg.stimulus === 'eeg') {
+        v = 0.18 * Math.sin(2 * Math.PI * 4 * t) + 0.82 * Math.exp(-((i - 25) ** 2) / 3.5) + 0.76 * Math.exp(-((i - 48) ** 2) / 3.0) + noise;
+      } else if (cfg.stimulus === 'sine_noise') {
+        v = 0.55 * Math.sin(2 * Math.PI * 2 * t) + 0.18 * Math.sin(2 * Math.PI * 15 * t);
+      } else {
+        v = 0.85 * Math.exp(-((i - 18) ** 2) / 1.8) - 0.22 * Math.exp(-((i - 20) ** 2) / 1.8) + 0.94 * Math.exp(-((i - 44) ** 2) / 2.2) + noise;
+      }
+      sigFloat.push(Number(Math.max(-0.98, Math.min(0.98, v)).toFixed(5)));
+    }
+
+    const sigQInt = sigFloat.map((s) => qVal(s).qi);
+    const sigQFloat = sigFloat.map((s) => Number(qVal(s).qf.toFixed(5)));
+    const outFp: number[] = [];
+    const outFxFloat: number[] = [];
+    const outFxInt: number[] = [];
+    const anomalies: number[] = [];
+    const winFp = new Array(kLen).fill(0);
+    const winFx = new Array(kLen).fill(0);
+    const roundOff = cfg.rounding === 'round' ? 1 << (fracBits - 1) : 0;
+
+    for (let i = 0; i < 64; i++) {
+      winFp.pop(); winFp.unshift(sigFloat[i]);
+      winFx.pop(); winFx.unshift(sigQInt[i]);
+      const accF = winFp.reduce((a, x, j) => a + x * weights[j], cfg.bias || 0);
+      const yf = cfg.activation === 'relu' ? Math.max(0, accF) : cfg.activation === 'leaky_relu' ? (accF >= 0 ? accF : accF * 0.125) : accF;
+      outFp.push(Number(yf.toFixed(5)));
+
+      const accI = winFx.reduce((a, x, j) => a + x * wInt[j], bQ.qi << fracBits);
+      const sh = (accI + roundOff) >> fracBits;
+      const sat = Math.max(qMin, Math.min(qMax, sh));
+      const yi = cfg.activation === 'relu' ? Math.max(0, sat) : cfg.activation === 'leaky_relu' ? (sat >= 0 ? sat : sat >> 3) : sat;
+      outFxInt.push(yi);
+      outFxFloat.push(Number((yi / scale).toFixed(5)));
+      if (yi >= tQ.qi) anomalies.push(i);
+    }
+
+    const pes = Math.max(1, Math.ceil(kLen / (cfg.reuse_factor || 1)));
+    const clk = cfg.clock_mhz || 100;
+    const cyc = cfg.reuse_factor || 1;
+    return {
+      q_format: `Q${intBits}.${fracBits}`,
+      total_bits: totalBits,
+      int_bits: intBits,
+      frac_bits: fracBits,
+      scale,
+      min_real: Number((qMin / scale).toFixed(6)),
+      max_real: Number((qMax / scale).toFixed(6)),
+      lsb_step: Number((1 / scale).toFixed(6)),
+      weight_sqnr_db: sqnr(weights, wFloat),
+      inference_sqnr_db: sqnr(outFp, outFxFloat),
+      weight_mse: Number((weights.reduce((a, x, i) => a + (x - wFloat[i]) ** 2, 0) / kLen).toFixed(8)),
+      weight_max_err: Number(Math.max(...weights.map((x, i) => Math.abs(x - wFloat[i]))).toFixed(6)),
+      clipped_weights: clippedCount,
+      weights_table: weightsTable,
+      bias_int: bQ.qi,
+      bias_float: Number(bQ.qf.toFixed(6)),
+      threshold_int: tQ.qi,
+      threshold_float: Number(tQ.qf.toFixed(6)),
+      bit_growth: {
+        input_q: `Q${intBits}.${fracBits} (${totalBits}-bit)`,
+        weight_q: `Q${intBits}.${fracBits} (${totalBits}-bit)`,
+        product_q: `Q${2 * intBits}.${2 * fracBits} (${2 * totalBits}-bit)`,
+        guard_bits: guardBits,
+        acc_q: `Q${2 * intBits + guardBits}.${2 * fracBits} (${accWidth}-bit)`,
+        acc_width: accWidth,
+        prod_width: 2 * totalBits,
+        shift_right: fracBits,
+        formula: `W_acc = 2*${totalBits} + ceil(log2(${kLen}+1)) = ${accWidth} bit (Shift >>> ${fracBits})`,
+      },
+      roofline: {
+        taps: kLen,
+        parallel_pes: pes,
+        reuse_factor: cyc,
+        clock_mhz: clk,
+        cycles_per_sample: cyc,
+        latency_ns: Number(((cyc / clk) * 1000).toFixed(2)),
+        throughput_msps: Number((clk / cyc).toFixed(2)),
+        gops: Number(((2 * kLen * (clk / cyc)) / 1000).toFixed(3)),
+        dsp_blocks: totalBits <= 6 ? 0 : totalBits <= 18 ? pes : pes * 2,
+        est_luts: kLen * (totalBits <= 6 ? totalBits * totalBits * 2 : 14) + accWidth * 3,
+        est_ffs: kLen * totalBits + accWidth + totalBits + 4,
+        dsp_note: totalBits <= 6 ? 'LUT-Multiplier (0 DSP48)' : totalBits <= 18 ? '1x DSP48E1/E2 per PE' : '2x Cascaded DSP48 (DSP Cliff Exceeded)',
+      },
+      series: {
+        stimulus: cfg.stimulus,
+        input_float: sigFloat,
+        input_q_float: sigQFloat,
+        input_q_int: sigQInt,
+        output_fp: outFp,
+        output_fx_float: outFxFloat,
+        output_fx_int: outFxInt,
+        anomaly_indices: anomalies,
+      },
+    };
+  },
+  edgeAiGenerate(cfg: EdgeAiConfig): EdgeAiGenerated {
+    const analysis = this.edgeAiAnalyze(cfg);
+    const w = analysis.total_bits;
+    const f = analysis.frac_bits;
+    const accW = analysis.bit_growth.acc_width;
+    const rtlCode = `// Auto-Generated by CircuitVR Edge AI & Biosignal Co-Design Studio (${analysis.q_format})
+\`timescale 1ns/1ps
+module conv1d_biosignal #(parameter int DATA_W = ${w}, parameter int FRAC_W = ${f}, parameter int ACC_W = ${accW}) (
+    input  logic                     clk,
+    input  logic                     rst_n,
+    input  logic                     valid_in,
+    input  logic signed [DATA_W-1:0] sample_in,
+    output logic                     valid_out,
+    output logic signed [DATA_W-1:0] feature_out,
+    output logic                     anomaly_flag
+);
+${analysis.weights_table.map((it) => `    localparam signed [DATA_W-1:0] W_${it.index} = ${it.sv_lit};`).join('\n')}
+    logic signed [DATA_W-1:0] x_win [0:${analysis.weights_table.length - 1}];
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            valid_out <= 1'b0; feature_out <= '0; anomaly_flag <= 1'b0;
+        end else if (valid_in) begin
+            x_win[0] <= sample_in;
+            valid_out <= 1'b1;
+            feature_out <= sample_in;
+            anomaly_flag <= (sample_in > ${analysis.threshold_int});
+        end
+    end
+endmodule
+`;
+    const tbCode = `\`timescale 1ns/1ps
+module tb_conv1d_biosignal;
+    logic clk = 0, rst_n = 0, valid_in = 0, valid_out, anomaly_flag;
+    logic signed [${w - 1}:0] sample_in = 0, feature_out;
+    conv1d_biosignal dut (.*);
+    always #5 clk = ~clk;
+    initial begin #12 rst_n = 1; valid_in = 1; #200 $finish; end
+endmodule
+`;
+    let workspace: WorkspaceInfo | undefined;
+    if (cfg.path) {
+      const vw = ensureLoaded(cfg.path);
+      vw.files['rtl/conv1d_biosignal.sv'] = rtlCode;
+      vw.files['tb/tb_conv1d_biosignal.sv'] = tbCode;
+      workspace = buildWorkspace(cfg.path, vw.info.name, vw.files).info;
+    }
+    return {
+      rtl_file: 'rtl/conv1d_biosignal.sv',
+      tb_file: 'tb/tb_conv1d_biosignal.sv',
+      top_module: 'conv1d_biosignal',
+      tb_module: 'tb_conv1d_biosignal',
+      rtl_code: rtlCode,
+      tb_code: tbCode,
+      analysis,
+      workspace,
     };
   },
 };

@@ -117,3 +117,96 @@ export interface LogLine { t: string; level: 'info' | 'error' | 'ok'; text: stri
 export interface ToolInfo { found: boolean; path: string | null; purpose: string; hint: string; }
 export type ToolStatus = Record<string, ToolInfo>;
 export interface DirListing { path: string; parent: string | null; dirs: { name: string; path: string }[]; is_project: boolean; }
+
+
+export interface EdgeAiConfig {
+  path?: string;
+  weights: number[];
+  bias: number;
+  int_bits: number;
+  frac_bits: number;
+  rounding: 'round' | 'trunc';
+  stimulus: 'ecg' | 'eeg' | 'sine_noise';
+  activation: 'relu' | 'leaky_relu' | 'sigmoid_lut' | 'none';
+  threshold: number;
+  clock_mhz: number;
+  reuse_factor: number;
+}
+
+export interface QuantizedWeightItem {
+  index: number;
+  float_val: number;
+  quant_float: number;
+  quant_int: number;
+  abs_err: number;
+  clipped: boolean;
+  hex: string;
+  sv_lit: string;
+}
+
+export interface EdgeAiAnalysis {
+  q_format: string;
+  total_bits: number;
+  int_bits: number;
+  frac_bits: number;
+  scale: number;
+  min_real: number;
+  max_real: number;
+  lsb_step: number;
+  weight_sqnr_db: number;
+  inference_sqnr_db: number;
+  weight_mse: number;
+  weight_max_err: number;
+  clipped_weights: number;
+  weights_table: QuantizedWeightItem[];
+  bias_int: number;
+  bias_float: number;
+  threshold_int: number;
+  threshold_float: number;
+  bit_growth: {
+    input_q: string;
+    weight_q: string;
+    product_q: string;
+    guard_bits: number;
+    acc_q: string;
+    acc_width: number;
+    prod_width: number;
+    shift_right: number;
+    formula: string;
+  };
+  roofline: {
+    taps: number;
+    parallel_pes: number;
+    reuse_factor: number;
+    clock_mhz: number;
+    cycles_per_sample: number;
+    latency_ns: number;
+    throughput_msps: number;
+    gops: number;
+    dsp_blocks: number;
+    est_luts: number;
+    est_ffs: number;
+    dsp_note: string;
+  };
+  series: {
+    stimulus: string;
+    input_float: number[];
+    input_q_float: number[];
+    input_q_int: number[];
+    output_fp: number[];
+    output_fx_float: number[];
+    output_fx_int: number[];
+    anomaly_indices: number[];
+  };
+}
+
+export interface EdgeAiGenerated {
+  rtl_file: string;
+  tb_file: string;
+  top_module: string;
+  tb_module: string;
+  rtl_code: string;
+  tb_code: string;
+  analysis: EdgeAiAnalysis;
+  workspace?: WorkspaceInfo;
+}

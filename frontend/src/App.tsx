@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Code2, Workflow, Activity, BarChart3 } from 'lucide-react';
+import { Code2, Workflow, Activity, BarChart3, BrainCircuit } from 'lucide-react';
 import TopBar from './components/TopBar';
 import Explorer from './components/Explorer';
 import CodeEditor from './components/CodeEditor';
 import CircuitViewer from './components/CircuitViewer';
 import WaveformViewer from './components/WaveformViewer';
 import AnalysisView from './components/AnalysisView';
+import EdgeAiView from './components/EdgeAiView';
 import BottomPanel from './components/BottomPanel';
 import WelcomeScreen from './components/WelcomeScreen';
 import { errMsg, ws, UploadItem } from './services/api';
@@ -17,7 +18,7 @@ import {
   Diagnostic, LintResult, LogLine, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
 } from './types';
 
-type View = 'code' | 'schematic' | 'wave' | 'analysis';
+type View = 'code' | 'schematic' | 'wave' | 'analysis' | 'edgeai';
 
 interface OpenFile { path: string; content: string; saved: string; }
 
@@ -26,6 +27,7 @@ const VIEWS: { id: View; label: string; icon: typeof Code2 }[] = [
   { id: 'schematic', label: 'Şematik', icon: Workflow },
   { id: 'wave', label: 'Waveform', icon: Activity },
   { id: 'analysis', label: 'Analiz', icon: BarChart3 },
+  { id: 'edgeai', label: 'Edge AI Lab', icon: BrainCircuit },
 ];
 
 function App() {
@@ -355,16 +357,29 @@ function App() {
           <nav className="flex border-b glass flex-shrink-0">
             {VIEWS.map((v) => {
               const Icon = v.icon;
-              const lbl = v.id === 'code' ? tr.tabCode : v.id === 'schematic' ? tr.tabSchematic : v.id === 'wave' ? tr.tabWave : tr.tabAnalysis;
+              const lbl =
+                v.id === 'code'
+                  ? tr.tabCode
+                  : v.id === 'schematic'
+                  ? tr.tabSchematic
+                  : v.id === 'wave'
+                  ? tr.tabWave
+                  : v.id === 'analysis'
+                  ? tr.tabAnalysis
+                  : tr.tabEdgeAi;
               return (
                 <button
                   key={v.id}
                   onClick={() => setView(v.id)}
                   className={`flex items-center gap-2 px-4 py-2 text-sm border-b-2 ${
-                    view === v.id ? 'border-primary text-white' : 'border-transparent text-gray-400 hover:text-gray-200'
+                    view === v.id
+                      ? 'border-primary text-white'
+                      : v.id === 'edgeai'
+                      ? 'border-transparent text-indigo-300 hover:text-white'
+                      : 'border-transparent text-gray-400 hover:text-gray-200'
                   }`}
                 >
-                  <Icon className="w-4 h-4" /> {lbl}
+                  <Icon className={`w-4 h-4 ${v.id === 'edgeai' ? 'text-indigo-400' : ''}`} /> {lbl}
                   {v.id === 'schematic' && stale && graph && <span className="w-2 h-2 rounded-full bg-yellow-400" />}
                 </button>
               );
@@ -396,6 +411,21 @@ function App() {
               <AnalysisView
                 info={info} top={top} lint={lint} stats={stats} busy={busy}
                 onLint={runLint} onSynth={runSynth} onGoto={gotoDiag}
+              />
+            )}
+            {view === 'edgeai' && (
+              <EdgeAiView
+                info={info}
+                onInjected={(updated, rtlFile, rtlCode, topMod, tbMod) => {
+                  if (updated) setInfo(updated);
+                  setTop(topMod);
+                  setTb(tbMod);
+                  setFile({ path: rtlFile, content: rtlCode, saved: rtlCode });
+                  setStale(true);
+                  log('ok', `Edge AI hızlandırıcı (${topMod}) ve Golden Testbench (${tbMod}) projeye eklendi.`);
+                }}
+                onRunSim={runSim}
+                onRunSchematic={runSchematic}
               />
             )}
           </main>

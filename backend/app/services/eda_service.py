@@ -72,10 +72,12 @@ def structural_checks(root: Path, files: List[str]) -> List[Dict[str, Any]]:
         parsed.append((rel, clean, mods, ends))
 
     for rel, clean, mods, ends in parsed:
+        # Mask string literals so text inside $display("... Word1 Word2 (...") is never mistaken for an instantiation
+        no_str = re.sub(r'"[^"\n]*"', lambda m: '""' + " " * max(0, len(m.group(0)) - 2), clean)
         for idx, m in enumerate(mods):
             mod_name = m.group(1)
-            end_pos = ends[idx].start() if idx < len(ends) else len(clean)
-            body = clean[m.end():end_pos]
+            end_pos = ends[idx].start() if idx < len(ends) else len(no_str)
+            body = no_str[m.end():end_pos]
             for im in _STRICT_INST_RE.finditer(body):
                 target, inst_name = im.group(1), im.group(2)
                 if target in _SV_KEYWORDS or inst_name in _SV_KEYWORDS or target == mod_name:

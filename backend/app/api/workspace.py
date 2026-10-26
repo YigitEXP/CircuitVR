@@ -298,3 +298,45 @@ def wave(req: WaveReq):
     if not p.is_file():
         raise HTTPException(404, "VCD yok; önce simülasyon çalıştırın")
     return parse_vcd(str(p))
+
+
+class EdgeAiReq(BaseModel):
+    path: Optional[str] = None
+    weights: List[float] = [-0.125, -0.25, 0.375, 0.875, 0.375, -0.25, -0.125]
+    bias: float = 0.0
+    int_bits: int = 2
+    frac_bits: int = 6
+    rounding: str = "round"
+    stimulus: str = "ecg"
+    activation: str = "relu"
+    threshold: float = 0.45
+    clock_mhz: float = 100.0
+    reuse_factor: int = 1
+
+
+@router.post("/edge-ai/analyze")
+def edge_ai_analyze(req: EdgeAiReq):
+    from app.services.edge_ai_service import analyze_edge_ai
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return analyze_edge_ai(payload)
+
+
+@router.post("/edge-ai/generate")
+def edge_ai_generate(req: EdgeAiReq):
+    from app.services.edge_ai_service import generate_edge_ai_rtl
+    payload = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    gen = generate_edge_ai_rtl(payload)
+    if req.path and not req.path.startswith(("demo://", "cloud://")):
+        root = _root(req.path)
+        rtl_dir = root / "rtl" if (root / "rtl").is_dir() or not (root / "RTL").is_dir() else (root / "RTL")
+        tb_dir = root / "tb" if (root / "tb").is_dir() or not (root / "TB").is_dir() else (root / "TB")
+        rtl_dir.mkdir(parents=True, exist_ok=True)
+        tb_dir.mkdir(parents=True, exist_ok=True)
+        rtl_p = rtl_dir / "conv1d_biosignal.sv"
+        tb_p = tb_dir / "tb_conv1d_biosignal.sv"
+        rtl_p.write_text(gen["rtl_code"], encoding="utf-8", newline="")
+        tb_p.write_text(gen["tb_code"], encoding="utf-8", newline="")
+        gen["rtl_file"] = rtl_p.relative_to(root).as_posix()
+        gen["tb_file"] = tb_p.relative_to(root).as_posix()
+        gen["workspace"] = ws.scan_workspace(str(root))
+    return gen

@@ -12,6 +12,7 @@ import WelcomeScreen from './components/WelcomeScreen';
 import { errMsg, ws, UploadItem } from './services/api';
 import ToolsDialog from './components/ToolsDialog';
 import DeveloperModal from './components/DeveloperModal';
+import OnboardingModal, { ONBOARDING_STORAGE_KEY } from './components/OnboardingModal';
 import { useI18n } from './i18n';
 import { APP_BUILD_TIME, APP_VERSION } from './version';
 import {
@@ -41,6 +42,9 @@ function App() {
   const [opening, setOpening] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showDev, setShowDev] = useState(false);
+  const [showTour, setShowTour] = useState<boolean>(
+    () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== '1'
+  );
 
   const [file, setFile] = useState<OpenFile | null>(null);
   const [goto, setGoto] = useState({ line: 0, nonce: 0 });
@@ -310,9 +314,21 @@ function App() {
   );
 
   const toolsDialog = showTools && (
-    <ToolsDialog tools={tools} onTools={setTools} onClose={() => setShowTools(false)} />
+    <ToolsDialog
+      tools={tools}
+      onTools={setTools}
+      onClose={() => setShowTools(false)}
+      onStartTour={() => setShowTour(true)}
+    />
   );
   const devDialog = showDev && <DeveloperModal onClose={() => setShowDev(false)} />;
+  const tourDialog = showTour && (
+    <OnboardingModal
+      onClose={() => setShowTour(false)}
+      onOpenDemo={(demoPath) => openWorkspace(demoPath)}
+      onOpenTools={() => setShowTools(true)}
+    />
+  );
 
   if (!info) {
     return (
@@ -320,6 +336,7 @@ function App() {
         {versionBadge}
         {toolsDialog}
         {devDialog}
+        {tourDialog}
         <WelcomeScreen
           tools={tools}
           error={welcomeErr}
@@ -339,6 +356,7 @@ function App() {
       {versionBadge}
       {toolsDialog}
       {devDialog}
+      {tourDialog}
       <TopBar
         info={info} top={top} tb={tb} simTime={simTime} autoLint={autoLint} tools={tools} busy={busy}
         onTop={setTop} onTb={setTb} onSimTime={setSimTime} onAutoLint={setAutoLint}

@@ -4,18 +4,18 @@
 
 # CircuitVR
 
-### **SystemVerilog · Verilog · VHDL RTL & Edge AI Hardware Design Studio**
+### **SystemVerilog · Verilog · VHDL RTL & Edge AI Hardware Co-Design Studio**
 
-*Gerçek Zamanlı Sentez Şematiği, Waveform Simülasyonu, Lint Denetimi ve Akıllı RTL Optimizasyon Danışmanı*  
-*Real-Time Synthesis Schematics, VCD Waveform Simulation, Static/Netlist Linting & Smart RTL Optimization Advisor*
+*Gerçek Zamanlı Sentez Şematiği, Waveform Simülasyonu, Akıllı RTL Optimizasyon Danışmanı ve Sabit Noktalı ($Qm.n$) 1D-CNN Biyosinyal Donanım Üreticisi*  
+*Real-Time Synthesis Schematics, VCD Waveform Simulation, Smart RTL Optimization Advisor & Fixed-Point ($Qm.n$) 1D-CNN Biosignal Hardware Studio*
 
 [![HDL Support](https://img.shields.io/badge/HDL-SystemVerilog%20%7C%20Verilog%20%7C%20VHDL-6366f1?style=for-the-badge)](#)
+[![Edge AI](https://img.shields.io/badge/Edge%20AI-1D--CNN%20%7C%20Qm.n%20Quantizer%20%7C%20ECG%2FEEG%20DSP-8b5cf6?style=for-the-badge)](#)
 [![Toolchain](https://img.shields.io/badge/EDA-Yosys%20%7C%20Icarus%20%7C%20Verilator-10b981?style=for-the-badge)](#)
 [![Frontend](https://img.shields.io/badge/Frontend-React%2018%20%2B%20TypeScript%20%2B%20ELKjs-38bdf8?style=for-the-badge)](#)
 [![Backend](https://img.shields.io/badge/Backend-FastAPI%20%2B%20Python%203.11%2B-f59e0b?style=for-the-badge)](#)
-[![Language](https://img.shields.io/badge/i18n-T%C3%BCrk%C3%A7e%20%7C%20English-ec4899?style=for-the-badge)](#)
 
-[**🇹🇷 Türkçe Dokümantasyon**](#-türkçe-dokümantasyon) • [**⚡ Tek Tık Kurulum**](#-1-hızlı-ve-tam-otomatik-kurulum-sıfır-ayar) • [**🚀 Vercel & Bulut Dağıtımı**](#-6-github--vercel-bulut-dağıtımı)
+[**🇹🇷 Türkçe Dokümantasyon**](#-türkçe-dokümantasyon) • [**🇬🇧 English Documentation**](#-english-documentation) • [**⚡ Tek Tık Kurulum**](#-1-hızlı-ve-tam-otomatik-kurulum-sıfır-ayar) • [**🧬 Edge AI Lab**](#-f-edge-ai--biyosinyal-1d-cnn--dsp-donanım-ortak-tasarım-stüdyosu-edge-ai-lab)
 
 </div>
 
@@ -30,7 +30,8 @@
 2. **Sentezleyip Kapı/Hücre Seviyesi Şematiğini Çizebildiği** (Yosys + ELKjs ortogonal yerleştirme motoru),
 3. **Testbench ile Simüle Edip Canlı Dalga Formunu (VCD Waveform) İnceleyebildiği** (Icarus Verilog + HTML5 Canvas Waveform),
 4. **Lint ve Yapısal Denetimden Geçirebildiği** (Verilator + Icarus + Akıllı AST Ön-Denetim),
-5. **Akıllı RTL Optimizasyon Danışmanı ile Optimize Edebildiği** (`0–100` Optimizasyon Skoru + *"Mevcut Kod ➔ Önerilen Optimize Kod"* dönüşümleri)
+5. **Akıllı RTL Optimizasyon Danışmanı ile Optimize Edebildiği** (`0–100` Optimizasyon Skoru + *"Mevcut Kod ➔ Önerilen Optimize Kod"* dönüşümleri),
+6. **Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu (`Edge AI Lab`)** ile Python/PyTorch `float32` ağırlıklarını sabit noktalı (`Qm.n`) donanıma dönüştürüp **SQNR (dB) niceleme kaybını**, **otomatik MAC akümülatör bit-genişlemesini (`Bit-Growth`)**, **FPGA DSP48 sınırlarını** ve **64 örneklik bit-doğru (bit-exact) ECG/EEG Golden Testbench + RTL hızlandırıcısını** tek tıkla üretebildiği
 
 modern, karanlık temalı (Dark Mode & Glassmorphism) bir donanım IDEsidir.
 
@@ -46,12 +47,14 @@ flowchart LR
         S["ELKjs Pin-Doğru\nŞematik Görüntüleyici"]
         V["HTML5 Canvas\nVCD Dalga Formu"]
         A["Akıllı RTL Optimizasyon\nDanışmanı & LUT/FF Analizi"]
+        AI["Edge AI & Biyosinyal Lab\n(Qm.n + 1D-CNN + Golden TB)"]
     end
 
     subgraph API["⚙️ FastAPI Backend (Python)"]
         WS["Workspace & Hiyerarşi\nTarayıcı (workspace_service)"]
         VH["VHDL ➔ SV Sentez Köprüsü\n(vhdl_service)"]
         OP["Akıllı Optimizasyon Motoru\n(optimizer_service)"]
+        EA["Edge AI Sentez & Co-Sim\n(edge_ai_service)"]
         IN["Otomatik Araç Kurucu\n(installer_service)"]
     end
 
@@ -63,6 +66,7 @@ flowchart LR
 
     UI <-->|REST JSON / Multipart| API
     WS --> VH
+    AI <--> EA
     API --> YO & IV & VL
     YO -->|Hücre & Kritik Yol Verisi| OP
 ```
@@ -76,8 +80,8 @@ GitHub'dan projeyi indiren bir kullanıcının bilgisayarında **Yosys**, **Icar
 ### 🪟 Windows (Tek Tıkla Kurulum ve Başlatma)
 
 ```powershell
-git clone https://github.com/YigitEXP/circuit_vr.git
-cd circuit_vr
+git clone https://github.com/YigitEXP/CircuitVR.git
+cd CircuitVR
 setup.bat
 ```
 
@@ -86,8 +90,8 @@ setup.bat
 ### 🐧 Linux & 🍎 macOS
 
 ```bash
-git clone https://github.com/YigitEXP/circuit_vr.git
-cd circuit_vr
+git clone https://github.com/YigitEXP/CircuitVR.git
+cd CircuitVR
 chmod +x setup.sh auto.sh
 ./setup.sh
 ```
@@ -143,6 +147,14 @@ Analiz sekmesinde kodunuzu hem **Statik AST Örüntü Analizi** hem de **Yosys S
 | **Sıfır Kapı Aritmetiği** | 2'nin kuvvetleriyle çarpma/bölme (`x * 4`, `x / 8`) ve boyutsuz sabitler (`+ 1`) | Kablo kaydırma (`x << 2`, `x >> 3`) ve `+ 1'b1` |
 | **VHDL IEEE Standartları** | Standart dışı `std_logic_unsigned`, `clk'event and clk='1'`, sınırsız `integer` (32-bit FF) | `ieee.numeric_std.all`, `rising_edge(clk)`, `integer range 0 to N` |
 
+### 🧬 F) Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu (`Edge AI Lab`)
+Python'da (`PyTorch` / `NumPy` / `Scikit-Learn`) eğitilen 1D-CNN veya sayısal filtre modellerini doğrudan FPGA RTL donanımına taşırken karşılaşılan en büyük mühendislik darboğazlarını çözer:
+* **Sabit Nokta ($Qm.n$) Niceleme & SQNR Gezgini:** Tam sayı ($m$) ve kesir ($n$) bit genişliklerini değiştirdiğiniz anda **Ağırlık SQNR (dB)**, **Uçtan Uca Çıkarım SQNR (dB)**, kırpılma (clipping) riski ve **2'ye Tümleyen (Two's Complement) SystemVerilog ROM (`-8'sd32`)** sabitlerini canlı hesaplar.
+* **Otomatik MAC Akümülatör Bit-Genişleme (`Bit-Growth`) Hesaplayıcısı:** $K$ elemanlı bir konvolüsyon penceresinde iç taşmayı (overflow) sıfırlamak için gereken tam akümülatör genişliğini ($W_{\text{acc}} = 2W + \lceil \log_2(K+1) \rceil$) ve kesir kaydırma miktarını (`>>> FRAC_W`) otomatik kurar.
+* **64-Örneklik Canlı ECG / EEG Co-Simulation Grafikleri:** Giriş **ECG (QRS + Aritmi)** veya **EEG (Alpha + Epileptik Diken)** sinyalini hem `Float64` referans modelinde hem de `Bit-Exact Sabit Noktalı RTL` modelinde koşturarak üst üste çizer ve çip üstü **Anomali Tetikleme (`anomaly_flag`)** noktalarını işaretler.
+* **Donanım Roofline & Xilinx DSP48 Cliff Analizi:** Saat frekansı (`MHz`) ve `Reuse Factor` değerine göre gecikmeyi (`ns`), `GOPS` başarımını ve çarpanların **DSP48** bloğuna mı yoksa **LUT** dokusuna mı yerleşeceğini raporlar.
+* **Tek Tıkla Sentezlenebilir RTL + Bit-Exact Golden Testbench Üretimi:** Tek tuşla `rtl/conv1d_biosignal.sv` hızlandırıcısını ve 64 örneklik kendi kendini doğrulayan (`64/64 Bit-Exact Matches`) `tb/tb_conv1d_biosignal.sv` testbench dosyasını projenize enjekte eder.
+
 ---
 
 ## ⌨️ 3. Klavye Kısayolları
@@ -160,10 +172,12 @@ Analiz sekmesinde kodunuzu hem **Statik AST Örüntü Analizi** hem de **Yosys S
 
 ```text
 circuit_vr/
+├── api/
+│   └── index.py                      # Vercel Python/FastAPI Serverless giriş noktası
 ├── backend/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── workspace.py          # REST API uç noktaları (/open, /schematic, /simulate, /lint, /synth-stats, /optimize)
+│   │   │   └── workspace.py          # REST API uç noktaları (/open, /schematic, /simulate, /lint, /synth-stats, /optimize, /edge-ai/*)
 │   │   ├── services/
 │   │   │   ├── workspace_service.py  # Çoklu-HDL (.sv/.v/.vhd) proje tarayıcı ve hiyerarşi çıkarıcı
 │   │   │   ├── yosys_service.py      # Yosys JSON netlist üretici
@@ -171,19 +185,20 @@ circuit_vr/
 │   │   │   ├── eda_service.py        # Icarus Verilog, Verilator ve Yosys synth/ltp yöneticisi
 │   │   │   ├── vhdl_service.py       # VHDL analizcisi ve sentezlenebilir VHDL ➔ SV köprüsü
 │   │   │   ├── optimizer_service.py  # Akıllı RTL Optimizasyon Danışmanı (Skor + Önce/Sonra)
+│   │   │   ├── edge_ai_service.py    # Edge AI Qm.n Niceleyici, 1D-CNN RTL & Golden TB Üreticisi
 │   │   │   ├── installer_service.py  # Çapraz platform otomatik EDA araç kurucusu
 │   │   │   └── vcd_parser.py         # Değer değişim (VCD) dalga formu ayrıştırıcısı
-│   │   └── main.py                   # FastAPI uygulama girişi ve CORS yapılandırması
+│   │   └── main.py                   # FastAPI uygulama girişi ve SPA statik dosya sunucusu
 │   ├── setup_tools.py                # CLI otomatik EDA araç zinciri kurulum betiği
-│   └── requirements.txt              # Python bağımlılıkları
+│   └── requirements.txt              # Yerel Python + Yosys bağımlılıkları
 ├── frontend/
 │   ├── public/
 │   │   └── favicon.svg               # Özel tasarım silikon çip / devre sekme ikonu
 │   ├── src/
-│   │   ├── components/               # TopBar, WelcomeScreen, Explorer, CodeEditor, SchematicViewer, WaveformViewer, AnalysisView
+│   │   ├── components/               # TopBar, WelcomeScreen, Explorer, CodeEditor, SchematicViewer, WaveformViewer, AnalysisView, EdgeAiView, DeveloperModal
 │   │   ├── services/
 │   │   │   ├── api.ts                # Backend istemcisi + Bulut yedekleme yönlendiricisi
-│   │   │   └── cloudFallback.ts      # Vercel / Tarayıcı içi demo ve analiz motoru
+│   │   │   └── cloudFallback.ts      # Vercel / Tarayıcı içi demo ve Edge AI analiz motoru
 │   │   ├── i18n.tsx                  # Türkçe (TR) & İngilizce (EN) anlık dil sistemi
 │   │   └── version.ts                # Canlı arayüz doğrulama sürüm rozeti
 │   └── index.html
@@ -192,25 +207,8 @@ circuit_vr/
 │   └── vhdl_alu_demo/                # VHDL 8-bit ALU + Testbench örneği
 ├── setup.bat / setup.sh              # Tek tıkla tam otomatik kurulum sihirbazı
 ├── run_local.bat                     # Hızlı yerel başlatıcı (Windows)
-└── vercel.json                       # Vercel sıfır-ayar dağıtım yapılandırması
+└── vercel.json                       # Vercel dağıtım yapılandırması
 ```
-
----
-
-## 🚀 5. GitHub & Vercel Bulut Dağıtımı
-
-Proje hem yerel bilgisayarda tam EDA araç zinciriyle hem de **Vercel** üzerinde bulut demo modunda çalışacak şekilde tasarlanmıştır:
-
-1. **GitHub'a Gönderme:**
-   ```powershell
-   git add .
-   git commit -m "feat: CircuitVR multi-HDL IDE with Smart RTL Optimization Advisor"
-   git remote add origin https://github.com/YigitEXP/circuit_vr.git
-   git push -u origin main
-   ```
-2. **Vercel'e Bağlama:**
-   * [vercel.com/new](https://vercel.com/new) sayfasından GitHub deponuzu seçin ve **Deploy**'a tıklayın.
-   * Kök dizindeki [`vercel.json`](vercel.json) sayesinde `frontend/dist` otomatik derlenir ve `cloudFallback.ts` motoru sayesinde ziyaretçileriniz sunucu kurmadan **SystemVerilog Traffic Light**, **Verilog Counter** ve **VHDL 8-Bit ALU** projelerini tarayıcıda deneyimleyebilir.
 
 ---
 
@@ -218,11 +216,12 @@ Proje hem yerel bilgisayarda tam EDA araç zinciriyle hem de **Vercel** üzerind
 
 ## 🌟 Overview
 
-**CircuitVR** is a lightweight, dark-mode hardware design IDE for **SystemVerilog (`.sv`)**, **Verilog (`.v`)**, and **VHDL (`.vhd`)** engineers. It combines:
+**CircuitVR** is a dark-mode hardware design & Edge AI co-design studio for **SystemVerilog (`.sv`)**, **Verilog (`.v`)**, and **VHDL (`.vhd`)** engineers. It combines:
 * **Real Yosys Gate-Level Schematics** with orthogonal **ELKjs** layout and bus-width inspection,
 * **One-Click Simulation & HTML5 Canvas VCD Waveform Viewer** powered by **Icarus Verilog (`iverilog` + `vvp`)**,
 * **Fast Static & Timing Linting** powered by **Verilator** and custom structural AST pre-checks,
 * **Smart RTL Optimization Advisor** that inspects both your HDL code and synthesized Yosys netlist (`LUTs`, `FFs`, `logic_depth`) to compute a `0–100` Optimization Score with side-by-side **"Current Code ➔ Suggested Optimized Code"** refactoring cards,
+* **Edge AI & Biosignal (1D-CNN / DSP) Co-Design Studio (`Edge AI Lab`)** that converts Python/PyTorch `float32` weights into fixed-point ($Qm.n$) hardware, computes **SQNR (dB)**, **automatic MAC accumulator bit-growth**, **FPGA DSP48 cliffs**, and generates synthesizable **1D-CNN RTL + 64-sample Bit-Exact Golden ECG/EEG Testbenches** in one click,
 * **Instant TR / EN Language Toggle** in the top navigation bar.
 
 ## ⚡ Quick Start (Zero Manual Setup)
@@ -248,4 +247,3 @@ Once started, open **`http://localhost:3000`** in your browser.
 
 * **GitHub:** [github.com/YigitEXP](https://github.com/YigitEXP)
 * **LinkedIn:** [linkedin.com/in/yiğit-can-aktürk-6b48262b6](https://www.linkedin.com/in/yi%C4%9Fit-can-akt%C3%BCrk-6b48262b6/)
-

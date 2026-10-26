@@ -1,3 +1,7 @@
 {
-  "version": 2
+  "version": 2,
+  "framework": "fastapi",
+  "installCommand": null,
+  "buildCommand": null,
+  "outputDirectory": null
 }

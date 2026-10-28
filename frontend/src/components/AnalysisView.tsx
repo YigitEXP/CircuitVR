@@ -383,7 +383,7 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
       </div>
 
       {/* FSM State Machine Extractor & Dead-State Security Audit */}
-      {fsmReport && fsmReport.fsms.length > 0 && (
+      {fsmReport && fsmReport.fsms.length > 0 ? (
         <div className="card space-y-3 border-sky-500/30">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h2 className="font-semibold flex items-center gap-2 text-sky-300">
@@ -406,6 +406,18 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
               />
             ))}
           </div>
+        </div>
+      ) : (
+        <div className="card space-y-1.5 border-slate-800 bg-slate-900/30 text-xs py-3">
+          <div className="flex items-center gap-2 text-slate-400 font-medium">
+            <GitBranch className="w-4 h-4 text-slate-500" />
+            {isTr ? 'FSM Durum Makinesi Tespiti' : 'FSM State Machine Extraction'}
+          </div>
+          <p className="text-slate-500 text-[11px]">
+            {isTr
+              ? 'Mevcut tasarımda sonlu durum makinesi (enum/localparam case) veya ardışıl kontrol bloğu bulunamadı. Tasarım saf kombinasyonel mantıktan oluşuyor olabilir.'
+              : 'No finite state machine (enum/localparam case) or sequential control block detected in this design. The module may be purely combinational.'}
+          </p>
         </div>
       )}
 

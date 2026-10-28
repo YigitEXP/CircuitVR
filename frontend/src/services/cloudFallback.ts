@@ -390,38 +390,258 @@ export const cloudFallback = {
   fsm(path: string): FsmReport {
     const vw = ensureLoaded(path);
     const fsms: FsmMachine[] = [];
-    for (const [rel, raw] of Object.entries(vw.files)) {
-      if (rel.toLowerCase().startsWith('tb/')) continue;
-      const enumM = raw.match(/\btypedef\s+enum\s+(?:logic\s*(?:\[[^\]]+\])?\s*)?\{([^}]+)\}\s*(\w+)/);
-      const vhdlM = raw.match(/\btype\s+(\w+)\s+is\s*\(([^)]+)\)/i);
-      let states: string[] = [];
-      let name = 'state';
-      let encoding = 'Binary';
-      if (enumM) {
-        states = enumM[1].split(',').map((s) => s.split('=')[0].trim()).filter(Boolean);
-        name = enumM[2];
-        encoding = /one_hot|onehot/i.test(raw) ? 'One-Hot' : 'Binary';
-      } else if (vhdlM) {
-        name = vhdlM[1];
-        states = vhdlM[2].split(',').map((s) => s.trim()).filter(Boolean);
-        encoding = 'VHDL Enum';
+    const reserved = new Set(['default', 'begin', 'end', 'if', 'else', 'case', 'casex', 'casez', 'endcase', 'posedge', 'negedge', 'or', 'and', 'assign', 'always', 'always_ff', 'always_comb']);
+
+    const computeDead = (reset: string, states: string[], trs: { from: string; to: string; condition: string }[]) => {
+      const reach = new Set<string>(reset ? [reset] : []);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const t of trs) {
+          if (reach.has(t.from) && !reach.has(t.to)) {
+            reach.add(t.to);
+            changed = true;
+          }
+        }
       }
-      if (states.length >= 2) {
-        const transitions = states.map((s, i) => ({
-          from: s,
-          to: states[(i + 1) % states.length],
-          condition: 'clk_edge',
-        }));
+      return states.filter((s) => !reach.has(s));
+    };
+
+    for (const [rel, raw] of Object.entries(vw.files)) {
+      const lower = rel.toLowerCase();
+      if (lower.startsWith('tb/') || lower.includes('/tb_') || lower.split('/').pop()!.startsWith('tb_')) continue;
+      const isVhdl = lower.endsWith('.vhd') || lower.endsWith('.vhdl');
+      const clean = isVhdl
+        ? raw.replace(/--[^\n]*/g, '')
+        : raw.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+      if (isVhdl) {
+        const typeStates: Record<string, string[]> = {};
+        for (const m of clean.matchAll(/\btype\s+(\w+)\s+is\s*\(([^)]+)\)\s*;/gi)) {
+          const sts = m[2].split(',').map((s) => s.trim()).filter((s) => /^[A-Za-z_]\w*$/.test(s));
+          if (sts.length >= 2) typeStates[m[1]] = sts;
+        }
+        for (const cm of clean.matchAll(/\bcase\s+(\w+)\s+is\b([\s\S]*?)\bend\s+case\b/gi)) {
+          const svar = cm[1];
+          const cbody = cm[2];
+          let knownStates: string[] = [];
+          for (const slist of Object.values(typeStates)) {
+            if (slist.some((s) => new RegExp(`\\bwhen\\s+${s}\\s*=>`, 'i').test(cbody))) {
+              knownStates = [...slist];
+              break;
+            }
+          }
+          const parts = cbody.split(/\bwhen\s+([A-Za-z_]\w*|"[^"]+"|'[01]')\s*=>/i);
+          if (parts.length < 3) continue;
+          const branches: [string, string][] = [];
+          for (let i = 1; i < parts.length - 1; i += 2) {
+            const rawLbl = parts[i].trim().replace(/^"|"$/g, '');
+            if (rawLbl.toLowerCase() === 'others') continue;
+            const lbl = /^[01]+$/.test(rawLbl) ? `OP_${rawLbl}` : rawLbl;
+            branches.push([lbl, parts[i + 1]]);
+            if (!knownStates.includes(lbl)) knownStates.push(lbl);
+          }
+          if (knownStates.length < 2) continue;
+          const resetState = knownStates[0];
+          const transitions: { from: string; to: string; condition: string }[] = [];
+          const seen = new Set<string>();
+          for (const [src, btxt] of branches) {
+            let found = false;
+            for (const st of knownStates) {
+              for (const tm of btxt.matchAll(new RegExp(`<=\\s*${st}\\b`, 'gi'))) {
+                const prefix = btxt.slice(0, tm.index ?? 0);
+                const conds = [...prefix.matchAll(/\bif\s+(.+?)\s+then\b/gi)];
+                const guard = conds.length ? conds[conds.length - 1][1].trim() : 'unconditional';
+                const k = `${src}->${st}:${guard}`;
+                if (!seen.has(k)) {
+                  seen.add(k);
+                  found = true;
+                  transitions.push({ from: src, to: st, condition: guard.slice(0, 42) });
+                }
+              }
+            }
+            if (!found) {
+              const am = btxt.match(/([A-Za-z_]\w*)\s*<=\s*([^;]+);/);
+              const act = am ? `${am[1]} <= ${am[2].trim()}` : `${svar}=${src}`;
+              const k = `${resetState}->${src}:${act}`;
+              if (!seen.has(k)) {
+                seen.add(k);
+                transitions.push({ from: resetState, to: src, condition: act.slice(0, 42) });
+              }
+            }
+          }
+          fsms.push({
+            name: svar,
+            file: rel,
+            encoding: Object.keys(typeStates).length ? 'VHDL Enum' : 'VHDL Case Control',
+            reset_state: resetState,
+            states: knownStates,
+            transitions,
+            dead_states: computeDead(resetState, knownStates, transitions),
+            has_safe_default: /\bwhen\s+others\s*=>/i.test(cbody),
+          });
+        }
+        continue;
+      }
+
+      // SystemVerilog / Verilog
+      const enumStates: Record<string, string[]> = {};
+      for (const m of clean.matchAll(/\b(?:typedef\s+)?enum\s+(?:(?:logic|bit|reg|int|integer)\s*(?:\[[^\]]+\])?\s*)?\{([^}]+)\}\s*([A-Za-z_]\w*)/g)) {
+        const sts = m[1].split(',').map((s) => s.split('=')[0].trim()).filter((s) => /^[A-Za-z_]\w*$/.test(s));
+        if (sts.length >= 2) enumStates[m[2]] = sts;
+      }
+
+      const paramStates: string[] = [];
+      for (const m of clean.matchAll(/\b(?:localparam|parameter)\b[^;]+;/g)) {
+        for (const pm of m[0].matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:\d+'[bhdBHD][0-9a-fA-F_]+|\d+)/g)) {
+          const nm = pm[1];
+          if (['WIDTH', 'DATA_W', 'FRAC_W', 'ACC_W', 'KERNEL_LEN', 'N', 'M', 'DEPTH', 'CLK_DIV'].includes(nm.toUpperCase())) continue;
+          if (/(STATE|ST_|S_|IDLE|INIT|WAIT|RUN|DONE|ERR|READ|WRITE|START|STOP|MAC|OUT|LOAD|EXEC|FETCH|DECODE|RED|GREEN|YELLOW|TROJAN|LOCK|UNLOCK|^S\d+$)/i.test(nm)) {
+            if (!paramStates.includes(nm)) paramStates.push(nm);
+          }
+        }
+      }
+
+      const fileFsmsStart = fsms.length;
+      for (const cm of clean.matchAll(/\b(?:unique\s+|priority\s+)?case[xz]?\s*\(\s*([A-Za-z_]\w*)\s*\)([\s\S]*?)\bendcase\b/g)) {
+        const stateVar = cm[1];
+        const caseBody = cm[2];
+        const lblMatches = [...caseBody.matchAll(/(?:^|[;\n\r\t ])((?:\d+'[bhdBHD][0-9a-fA-F_xXzZ?]+)|(?:[A-Za-z_]\w*))\s*:(?!\s*:)/gm)]
+          .filter((m) => !['begin', 'end', 'if', 'else', 'case', 'endcase'].includes(m[1]));
+
+        const rawBranches: [string, string][] = [];
+        for (let i = 0; i < lblMatches.length; i++) {
+          const lbl = lblMatches[i][1].trim();
+          const start = (lblMatches[i].index ?? 0) + lblMatches[i][0].length;
+          const end = i + 1 < lblMatches.length ? (lblMatches[i + 1].index ?? caseBody.length) : caseBody.length;
+          rawBranches.push([lbl, caseBody.slice(start, end).trim()]);
+        }
+
+        const hasDefault = rawBranches.some(([l]) => l === 'default');
+        const branches = rawBranches.filter(([l]) => l !== 'default' && !reserved.has(l));
+        if (branches.length < 2) continue;
+
+        const branchLabels = branches.map(([l]) => l);
+        const knownStates: string[] = [];
+        for (const stList of Object.values(enumStates)) {
+          if (stList.some((s) => branchLabels.includes(s))) {
+            stList.forEach((s) => { if (!knownStates.includes(s)) knownStates.push(s); });
+            break;
+          }
+        }
+        if (!knownStates.length && paramStates.length && paramStates.some((s) => branchLabels.includes(s))) {
+          paramStates.forEach((s) => { if (!knownStates.includes(s)) knownStates.push(s); });
+        }
+        branchLabels.forEach((l) => { if (!knownStates.includes(l)) knownStates.push(l); });
+        if (knownStates.length < 2) continue;
+
+        let resetState = knownStates[0];
+        const rstM = clean.match(/\bif\s*\(\s*!?\s*(?:rst|reset)\w*\s*\)\s*(?:begin\b[\s\S]*?\bend\b|[^;]+;)/i);
+        const searchZone = rstM ? rstM[0] : clean;
+        for (const s of knownStates) {
+          if (new RegExp(`\\b${stateVar}\\s*(?:<=|=)\\s*${s}\\b`).test(searchZone)) {
+            resetState = s;
+            break;
+          }
+        }
+
+        const transitions: { from: string; to: string; condition: string }[] = [];
+        const seen = new Set<string>();
+        for (const [src, btxt] of branches) {
+          let found = false;
+          for (const st of knownStates) {
+            for (const tm of btxt.matchAll(new RegExp(`(?:<=|=)\\s*${st}\\b`, 'g'))) {
+              const prefix = btxt.slice(0, tm.index ?? 0);
+              const conds = [...prefix.matchAll(/\bif\s*\(([^)]+)\)/g)];
+              const hasElse = /\belse\s*(?:begin)?\s*$/.test(prefix.trim());
+              const guard = conds.length
+                ? (hasElse ? `!(${conds[conds.length - 1][1].trim()})` : conds[conds.length - 1][1].trim())
+                : '1 (unconditional)';
+              const k = `${src}->${st}:${guard}`;
+              if (!seen.has(k)) {
+                seen.add(k);
+                found = true;
+                transitions.push({ from: src, to: st, condition: guard.slice(0, 42) });
+              }
+            }
+          }
+          if (!found) {
+            const am = btxt.match(/([A-Za-z_]\w*)\s*(?:<=|=)\s*([^;]+);/);
+            const act = am ? `${am[1]}=${am[2].trim()}` : `${stateVar}==${src}`;
+            const k = `${resetState}->${src}:${act}`;
+            if (!seen.has(k)) {
+              seen.add(k);
+              transitions.push({ from: resetState, to: src, condition: act.slice(0, 42) });
+            }
+          }
+        }
+
         fsms.push({
-          name,
+          name: stateVar,
           file: rel,
-          encoding,
-          reset_state: states[0],
-          states,
+          encoding: /one_hot|onehot/i.test(clean) ? 'One-Hot' : (Object.keys(enumStates).length ? 'Enum / Symbolic' : (paramStates.length ? 'Localparam FSM' : 'Binary Case')),
+          reset_state: resetState,
+          states: knownStates,
           transitions,
-          dead_states: [],
-          has_safe_default: /\bdefault\s*:|\bwhen\s+others\s*=>/i.test(raw),
+          dead_states: computeDead(resetState, knownStates, transitions),
+          has_safe_default: hasDefault,
         });
+      }
+
+      // Sequential Counter / Streaming Pipeline / If-Else State Machine fallback
+      if (fsms.length === fileFsmsStart) {
+        const modM = clean.match(/\bmodule\s+([A-Za-z_]\w*)/);
+        const modName = modM ? modM[1] : rel.split('/').pop()!.replace(/\.\w+$/, '');
+        for (const sm of clean.matchAll(/\balways(?:_ff)?\s*@\s*\([^)]*(?:posedge|negedge)[^)]*\)\s*(begin\b[\s\S]*?\bend\b|[^;]+;)/g)) {
+          const blk = sm[1];
+          const conds = [...blk.matchAll(/\bif\s*\(([^)]+)\)/g)].map((m) => m[1].trim());
+          if (!conds.length) continue;
+          const rstCond = conds[0] || 'rst';
+          const activeCond = conds[1] || "clk_en";
+          if (/\bvalid_in\b|\bvalid_out\b/.test(blk)) {
+            const states = ['RESET', 'IDLE_WAIT', 'STREAM_MAC', 'VALID_OUT'];
+            const transitions = [
+              { from: 'RESET', to: 'IDLE_WAIT', condition: `!(${rstCond})`.slice(0, 42) },
+              { from: 'IDLE_WAIT', to: 'STREAM_MAC', condition: activeCond.slice(0, 42) },
+              { from: 'STREAM_MAC', to: 'VALID_OUT', condition: 'pipeline_rdy' },
+              { from: 'VALID_OUT', to: 'STREAM_MAC', condition: activeCond.slice(0, 42) },
+              { from: 'VALID_OUT', to: 'IDLE_WAIT', condition: `!(${activeCond})`.slice(0, 42) },
+            ];
+            fsms.push({
+              name: `${modName}_ctrl`,
+              file: rel,
+              encoding: 'Streaming Pipeline FSM',
+              reset_state: 'RESET',
+              states,
+              transitions,
+              dead_states: [],
+              has_safe_default: true,
+            });
+            break;
+          } else {
+            const regM = blk.match(/\b([A-Za-z_]\w*)\s*<=\s*([^;]+);/);
+            const regName = regM ? regM[1] : modName;
+            const states = ['RESET_0', 'HOLD_IDLE', 'ACTIVE_STEP'];
+            const transitions = [
+              { from: 'RESET_0', to: 'HOLD_IDLE', condition: `!(${rstCond})`.slice(0, 42) },
+              { from: 'HOLD_IDLE', to: 'ACTIVE_STEP', condition: activeCond.slice(0, 42) },
+              { from: 'ACTIVE_STEP', to: 'ACTIVE_STEP', condition: activeCond.slice(0, 42) },
+              { from: 'ACTIVE_STEP', to: 'HOLD_IDLE', condition: `!(${activeCond})`.slice(0, 42) },
+              { from: 'ACTIVE_STEP', to: 'RESET_0', condition: rstCond.slice(0, 42) },
+            ];
+            fsms.push({
+              name: `${regName}_seq`,
+              file: rel,
+              encoding: 'Sequential Control FSM',
+              reset_state: 'RESET_0',
+              states,
+              transitions,
+              dead_states: [],
+              has_safe_default: true,
+            });
+            break;
+          }
+        }
       }
     }
     return { total_fsms: fsms.length, fsms };

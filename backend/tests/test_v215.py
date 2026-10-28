@@ -99,6 +99,57 @@ endmodule
             self.assertIn("GHOST_TROJAN", fsm["dead_states"])
             self.assertFalse(fsm["has_safe_default"])
 
+            # Test Verilog localparam FSM extraction
+            v_file = rtl_dir / "edge_folded_fsm.v"
+            v_file.write_text(
+                """module edge_folded_fsm (input wire clk, input wire rst_n, input wire start);
+    localparam [1:0] ST_IDLE = 2'd0, ST_MAC = 2'd1, ST_OUT = 2'd2;
+    reg [1:0] state;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) state <= ST_IDLE;
+        else begin
+            case (state)
+                ST_IDLE: if (start) state <= ST_MAC;
+                ST_MAC:  state <= ST_OUT;
+                ST_OUT:  state <= ST_IDLE;
+                default: state <= ST_IDLE;
+            endcase
+        end
+    end
+endmodule
+""",
+                encoding="utf-8",
+            )
+            v_rep = extract_workspace_fsms(root, [str(v_file)])
+            self.assertEqual(v_rep["total_fsms"], 1)
+            self.assertEqual(v_rep["fsms"][0]["name"], "state")
+            self.assertEqual(len(v_rep["fsms"][0]["states"]), 3)
+            self.assertTrue(v_rep["fsms"][0]["has_safe_default"])
+
+            # Test VHDL case control extraction (e.g. alu_ctrl.vhd)
+            vhd_file = rtl_dir / "alu_ctrl.vhd"
+            vhd_file.write_text(
+                """library ieee; use ieee.std_logic_1164.all;
+entity alu_ctrl is port (clk, rst: in std_logic; op: in std_logic_vector(1 downto 0); y: out std_logic_vector(7 downto 0)); end alu_ctrl;
+architecture rtl of alu_ctrl is
+begin
+    process(clk) begin
+        if rising_edge(clk) then
+            case op is
+                when "00" => y <= x"01";
+                when "01" => y <= x"02";
+                when others => y <= x"00";
+            endcase;
+        end if;
+    end process;
+end rtl;
+""",
+                encoding="utf-8",
+            )
+            vhd_rep = extract_workspace_fsms(root, [str(vhd_file)])
+            self.assertEqual(vhd_rep["total_fsms"], 1)
+            self.assertIn("OP_00", vhd_rep["fsms"][0]["states"])
+
     def test_critical_path_dag_and_edge_ai_pareto(self):
         dummy_netlist = {
             "modules": {

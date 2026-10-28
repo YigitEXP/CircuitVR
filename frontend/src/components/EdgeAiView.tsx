@@ -432,8 +432,8 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               </div>
               <p className="text-[11px] text-slate-400">
                 {isTr
-                  ? 'Projendeki mevcut `.sv/.v/.vhd` dosyalarının portlarını/ağırlıklarını algılar veya dışarıdan `.json/.csv` model yükleyip kendi modülüne özel Golden TB üretir.'
-                  : 'Auto-detects your existing `.sv/.v/.vhd` ports & weights or imports `.json/.csv` models to generate a Golden TB for your own RTL.'}
+                  ? 'Projendeki mevcut `.sv/.v/.vhd` dosyalarının portlarını/ağırlıklarını algılar veya dışarıdan `.pkl, .npy, .npz, .pt, .json, .csv, .coe` model yükleyip Golden TB üretir.'
+                  : 'Auto-detects your existing `.sv/.v/.vhd` ports & weights or imports `.pkl, .npy, .npz, .pt, .json, .csv, .coe` models to generate a Golden TB for your own RTL.'}
               </p>
             </div>
             <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${workflowMode === 'custom' ? 'bg-emerald-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'}`}>
@@ -474,13 +474,6 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                 ? 'Projendeki Mevcut RTL Dosyasını Algıla & Dışarıdan Kendi Modelini Yükle'
                 : 'Auto-Detect Workspace RTL & Import Custom Model / Signal'}
             </div>
-            <input
-              ref={modelFileRef}
-              type="file"
-              accept=".pkl,.pickle,.npy,.npz,.pt,.pth,.json,.csv,.txt,.mem,.coe"
-              className="hidden"
-              onChange={handleModelFileUpload}
-            />
             <button
               type="button"
               onClick={() => modelFileRef.current?.click()}
@@ -659,9 +652,32 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
           )}
 
           <div className="space-y-1">
-            <label className="text-[11px] text-slate-400">
-              {isTr ? 'Python / PyTorch Float32 Ağırlık Dizisi (virgülle)' : 'Python / PyTorch Float32 Weights (comma-separated)'}
-            </label>
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-[11px] text-slate-400">
+                {isTr ? 'Python / PyTorch Float32 Ağırlık Dizisi (virgülle)' : 'Python / PyTorch Float32 Weights (comma-separated)'}
+              </label>
+              <button
+                type="button"
+                onClick={() => modelFileRef.current?.click()}
+                className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 flex items-center gap-1"
+                title={isTr ? 'Python .pkl, .npy, .npz, .pt, .json, .csv, .coe model dosyası yükle' : 'Upload Python .pkl, .npy, .npz, .pt, .json, .csv, .coe model file'}
+              >
+                <Upload className="w-3 h-3" />
+                {isTr ? 'Dosyadan Yükle (.pkl/.npy/.pt/.json/.csv)' : 'Upload File (.pkl/.npy/.pt/.json/.csv)'}
+              </button>
+            </div>
+            <input
+              ref={modelFileRef}
+              type="file"
+              accept=".pkl,.pickle,.npy,.npz,.pt,.pth,.json,.csv,.txt,.mem,.coe"
+              className="hidden"
+              onChange={handleModelFileUpload}
+            />
+            {uploadNotice && (
+              <div className="text-[11px] text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 rounded px-2 py-1 font-mono">
+                {uploadNotice}
+              </div>
+            )}
             <textarea
               rows={2}
               value={weightsText}

@@ -861,6 +861,53 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                   );
                 })}
               </div>
+              {(() => {
+                const pts = analysis.pareto_front;
+                const minLut = Math.min(...pts.map((p) => p.est_luts), 10);
+                const maxLut = Math.max(...pts.map((p) => p.est_luts), minLut + 10);
+                const minDb = 0;
+                const maxDb = Math.max(...pts.map((p) => p.inference_sqnr_db), 45);
+                const W = 320;
+                const H = 86;
+                const px = (lut: number) => 26 + ((lut - minLut) / Math.max(1, maxLut - minLut)) * (W - 48);
+                const py = (db: number) => H - 16 - ((Math.min(maxDb, Math.max(minDb, db)) - minDb) / Math.max(1, maxDb - minDb)) * (H - 28);
+                const sorted = [...pts].sort((a, b) => a.est_luts - b.est_luts);
+                const linePath = sorted.map((p, i) => `${i === 0 ? 'M' : 'L'}${px(p.est_luts).toFixed(1)},${py(p.inference_sqnr_db).toFixed(1)}`).join(' ');
+                const y30 = py(30);
+                return (
+                  <div className="bg-slate-950/80 border border-slate-800/80 rounded p-1.5">
+                    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-20 overflow-visible">
+                      <line x1={26} y1={y30} x2={W - 14} y2={y30} stroke="#10b981" strokeWidth="0.8" strokeDasharray="3 2" opacity={0.5} />
+                      <text x={W - 12} y={y30 + 3} textAnchor="end" className="fill-emerald-400/70 text-[7px] font-mono">30dB Hedef</text>
+                      <path d={linePath} fill="none" stroke="#6366f1" strokeWidth="1.3" opacity={0.75} />
+                      {sorted.map((p) => {
+                        const isSel = cfg.int_bits === p.int_bits && cfg.frac_bits === p.frac_bits;
+                        const cx = px(p.est_luts);
+                        const cy = py(p.inference_sqnr_db);
+                        return (
+                          <g
+                            key={p.q_format}
+                            className="cursor-pointer"
+                            onClick={() => setCfg((c) => ({ ...c, int_bits: p.int_bits, frac_bits: p.frac_bits }))}
+                          >
+                            <circle
+                              cx={cx}
+                              cy={cy}
+                              r={isSel ? 4.5 : p.recommended ? 4 : 3}
+                              fill={isSel ? '#38bdf8' : p.recommended ? '#10b981' : '#94a3b8'}
+                              stroke="#0f172a"
+                              strokeWidth="1"
+                            />
+                            <text x={cx} y={cy - 5} textAnchor="middle" className="fill-slate-300 text-[7px] font-mono">
+                              {p.q_format}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>

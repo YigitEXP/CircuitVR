@@ -1,6 +1,6 @@
 import axios from 'axios';
 import {
-  AutoFixResponse, DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, InspectedRtlInfo, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
+  AutoFixResponse, DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, FsmReport, InspectedRtlInfo, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
 } from '../types';
 import { cloudFallback } from './cloudFallback';
 
@@ -105,6 +105,20 @@ export const ws = {
       .post<AutoFixResponse>(`${P}/optimize/autofix`, { path, file, line, before, after })
       .then((r) => r.data)
       .catch(() => cloudFallback.optimizeAutofix(path, file, line, before, after));
+  },
+  optimizeIgnore: (path: string, file: string, line: number, rule_id: string) => {
+    if (isCloudPath(path)) return Promise.resolve(cloudFallback.optimizeIgnore(path, file, line, rule_id));
+    return api
+      .post<AutoFixResponse>(`${P}/optimize/ignore`, { path, file, line, rule_id })
+      .then((r) => r.data)
+      .catch(() => cloudFallback.optimizeIgnore(path, file, line, rule_id));
+  },
+  fsm: (path: string, top?: string) => {
+    if (isCloudPath(path)) return Promise.resolve(cloudFallback.fsm(path));
+    return api
+      .post<FsmReport>(`${P}/fsm`, { path, top })
+      .then((r) => r.data)
+      .catch(() => cloudFallback.fsm(path));
   },
   wave: (path: string, vcd?: string) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.wave());

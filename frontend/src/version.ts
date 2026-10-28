@@ -1,3 +1,3 @@
 // Her güncellemede bu sürümü artırıyorum. Yan taraftaki tarih/saat ise derleme anında otomatik yazılır.
-export const APP_VERSION = 'V 2.14';
+export const APP_VERSION = 'V 2.15';
 export const APP_BUILD_TIME: string = __BUILD_TIME__;

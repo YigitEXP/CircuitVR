@@ -113,6 +113,28 @@ export interface OptimizationReport {
   suggestions: OptimizationSuggestion[];
 }
 
+export interface FsmTransition {
+  from: string;
+  to: string;
+  condition: string;
+}
+
+export interface FsmMachine {
+  name: string;
+  file: string;
+  encoding: string;
+  reset_state: string;
+  states: string[];
+  transitions: FsmTransition[];
+  dead_states: string[];
+  has_safe_default: boolean;
+}
+
+export interface FsmReport {
+  total_fsms: number;
+  fsms: FsmMachine[];
+}
+
 export interface SynthStats {
   success: boolean;
   error?: string;

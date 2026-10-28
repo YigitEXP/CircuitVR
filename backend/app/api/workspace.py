@@ -5,7 +5,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.services import eda_service, workspace_service as ws
-from app.services.optimizer_service import analyze_optimizations, apply_optimization_autofix
+from app.services.fsm_service import extract_workspace_fsms
+from app.services.optimizer_service import analyze_optimizations, apply_optimization_autofix, insert_ignore_pragma
 from app.services.schematic_service import build_schematic
 from app.services.vcd_parser import parse_vcd
 from app.services.yosys_service import YosysService
@@ -317,6 +318,44 @@ def optimize_autofix(req: AutoFixReq):
         "fingerprint": ws.fingerprint(root),
         "optimization": analyze_optimizations(root, files),
     }
+
+
+class IgnoreRuleReq(BaseModel):
+    path: str
+    file: str
+    line: int = 1
+    rule_id: str
+
+
+@router.post("/optimize/ignore")
+def optimize_ignore(req: IgnoreRuleReq):
+    root = _root(req.path)
+    try:
+        p = ws.resolve_in(root, req.file)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if not p.is_file():
+        raise HTTPException(404, f"Dosya bulunamadı: {req.file}")
+    raw = p.read_text(encoding="utf-8", errors="replace")
+    is_vhdl = p.suffix.lower() in (".vhd", ".vhdl")
+    res = insert_ignore_pragma(raw, req.line, req.rule_id, is_vhdl=is_vhdl)
+    if res["applied"]:
+        p.write_text(res["content"], encoding="utf-8", newline="")
+    files = ws.compile_files(root, groups=("rtl",))
+    return {
+        "applied": res["applied"],
+        "file": req.file,
+        "content": res["content"],
+        "fingerprint": ws.fingerprint(root),
+        "optimization": analyze_optimizations(root, files),
+    }
+
+
+@router.post("/fsm")
+def extract_fsm(req: LintReq):
+    root = _root(req.path)
+    files = ws.compile_files(root, groups=("rtl",))
+    return extract_workspace_fsms(root, files, req.top)
 
 
 @router.post("/wave")

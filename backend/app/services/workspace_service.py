@@ -42,8 +42,11 @@ def resolve_root(path: str) -> Path:
 
 
 def resolve_in(root: Path, rel: str) -> Path:
-    """Resolve a project-relative path, refusing to escape the workspace."""
-    p = (root / rel).resolve()
+    """Resolve a project-relative path, refusing to escape the workspace or follow symlinks."""
+    cand = root / rel
+    if cand.exists() and cand.is_symlink():
+        raise PermissionError("Symbolic links are not allowed inside the workspace")
+    p = cand.resolve()
     if root != p and root not in p.parents:
         raise PermissionError("Path is outside the workspace")
     return p
@@ -64,7 +67,7 @@ def _classify(rel: Path) -> str:
 
 def _iter_files(root: Path):
     for p in sorted(root.rglob("*")):
-        if not p.is_file():
+        if p.is_symlink() or not p.is_file():
             continue
         rel = p.relative_to(root)
         if any(part in SKIP_DIRS for part in rel.parts):

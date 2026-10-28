@@ -90,6 +90,7 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
   const [markerB, setMarkerB] = useState<number | null>(null);
   const [radix, setRadix] = useState<Radix>('hex');
   const [analogMode, setAnalogMode] = useState<boolean>(false);
+  const [showMeasurements, setShowMeasurements] = useState<boolean>(false);
   const [picker, setPicker] = useState(false);
   const [filter, setFilter] = useState('');
   const [width, setWidth] = useState(600);
@@ -198,6 +199,28 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
     const freqMhz = dtPs > 0 ? (1e6 / dtPs).toFixed(2) : null;
     return { dtStr, freqMhz };
   }, [markerA, markerB, psTick]);
+
+  const measurementRows = useMemo(() => {
+    if (!wave) return [];
+    const tStart = markerA !== null && markerB !== null ? Math.min(markerA, markerB) : 0;
+    const tEnd = markerA !== null && markerB !== null ? Math.max(markerA, markerB) : endT;
+    const windowPs = Math.max(0, (tEnd - tStart) * psTick);
+    return rows.map((s) => {
+      const ch = wave.changes[s.id] ?? [];
+      const iA = lastAtOrBefore(ch, tStart);
+      const iB = lastAtOrBefore(ch, tEnd);
+      const valA = iA >= 0 ? formatValue(ch[iA][1], s.width, radix) : '—';
+      const valB = iB >= 0 ? formatValue(ch[iB][1], s.width, radix) : '—';
+      let edges = 0;
+      let firstXZ: number | null = null;
+      for (const [ts, v] of ch) {
+        if (ts >= tStart && ts <= tEnd) edges++;
+        if (firstXZ === null && /[xz]/i.test(v)) firstXZ = ts;
+      }
+      const toggleFreqMhz = windowPs > 0 && edges >= 2 ? ((edges / 2) * (1e6 / windowPs)).toFixed(2) : '—';
+      return { sig: s, valA, valB, edges, toggleFreqMhz, firstXZ };
+    });
+  }, [wave, rows, markerA, markerB, endT, psTick, radix]);
 
   // ---- drawing ----
   useEffect(() => {
@@ -400,6 +423,20 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
         <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setShowMeasurements((v) => !v)}
+            disabled={!wave}
+            className={`px-2 py-1 rounded border text-xs flex items-center gap-1 transition ${
+              showMeasurements
+                ? 'bg-indigo-600/25 border-indigo-400 text-indigo-200'
+                : 'bg-surface hover:bg-slate-700 border-slate-700 text-slate-300'
+            }`}
+            title={isTr ? 'Sinyal Ölçüm Tablosu & X/Z Belirsiz Durum Denetimi' : 'Signal Measurements & X/Z State Audit'}
+          >
+            <Ruler className="w-3.5 h-3.5 text-indigo-400" />
+            {isTr ? 'Ölçümler & X/Z' : 'Measurements'}
+          </button>
+          <button
+            type="button"
             onClick={() => setAnalogMode((v) => !v)}
             disabled={!wave}
             className={`px-2 py-1 rounded border text-xs flex items-center gap-1 transition ${
@@ -521,6 +558,59 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
               ? 'Sol Tık: İmleç A · Shift+Tık / Sağ Tık: İmleç B (Δt ölçümü) · Analog Mod: EKG/EEG eğrisi'
               : 'Left Click: Marker A · Shift+Click / Right Click: Marker B (Δt) · Analog Mode: step wave'}
           </div>
+          {showMeasurements && (
+            <div className="max-h-44 overflow-y-auto border-t border-slate-700 bg-slate-950/95 px-3 py-2 text-xs font-mono">
+              <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-slate-800 text-[11px] text-slate-400">
+                <span>
+                  {isTr
+                    ? 'Otomatik Sinyal Ölçüm & X/Z Kök Neden Tablosu (A↔B Aralığı)'
+                    : 'Automatic Signal Measurements & X/Z Root-Cause Table (A↔B Window)'}
+                </span>
+                <span className="text-indigo-400">
+                  {markerA !== null && markerB !== null
+                    ? `${formatTime(Math.min(markerA, markerB), psTick)} ➔ ${formatTime(Math.max(markerA, markerB), psTick)}`
+                    : `0 ➔ ${formatTime(endT, psTick)}`}
+                </span>
+              </div>
+              <table className="w-full text-left border-collapse text-[11px]">
+                <thead>
+                  <tr className="text-slate-400 border-b border-slate-800">
+                    <th className="py-1 pr-2">{isTr ? 'Sinyal' : 'Signal'}</th>
+                    <th className="py-1 px-2">Val(A)</th>
+                    <th className="py-1 px-2">Val(B)</th>
+                    <th className="py-1 px-2">{isTr ? 'Kenar (Edges)' : 'Edges'}</th>
+                    <th className="py-1 px-2">{isTr ? 'Tahmini Frekans' : 'Est. Freq'}</th>
+                    <th className="py-1 pl-2">{isTr ? 'X/Z Durumu' : 'X/Z Status'}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {measurementRows.map((r) => (
+                    <tr key={r.sig.name} className="border-b border-slate-800/50 hover:bg-slate-900">
+                      <td className="py-1 pr-2 text-slate-200">{r.sig.short}</td>
+                      <td className="py-1 px-2 text-amber-300">{r.valA}</td>
+                      <td className="py-1 px-2 text-orange-300">{r.valB}</td>
+                      <td className="py-1 px-2 text-sky-300">{r.edges}</td>
+                      <td className="py-1 px-2 text-emerald-300">{r.toggleFreqMhz !== '—' ? `${r.toggleFreqMhz} MHz` : '—'}</td>
+                      <td className="py-1 pl-2">
+                        {r.firstXZ !== null ? (
+                          <button
+                            type="button"
+                            onClick={() => setMarkerA(r.firstXZ)}
+                            className="text-red-400 hover:underline"
+                            title={isTr ? 'İlk X/Z anına imleç A ile git' : 'Jump Marker A to first X/Z timestamp'}
+                          >
+                            ⚠ X/Z @ {formatTime(r.firstXZ, psTick)}
+                          </button>
+                        ) : (
+                          <span className="text-emerald-400">✓ Clean</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>

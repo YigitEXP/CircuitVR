@@ -303,7 +303,7 @@ const Inner: React.FC<Props> = ({ graph }) => {
           >
             <Zap className="w-3.5 h-3.5 text-rose-400" />
             <span>
-              {isTr ? 'Kritik Yol:' : 'Critical Path:'} {cp.depth} {isTr ? 'kademe' : 'stages'} ({cp.delay_ns} ns · Fmax ≈ {cp.fmax_mhz} MHz)
+              {isTr ? 'Kritik Yol:' : 'Critical Path:'} {cp.depth} {isTr ? 'kademe' : 'stages'} (~{cp.delay_ns} ns · {isTr ? 'Tahmini' : 'Est.'} Fmax ≈ {cp.fmax_mhz} MHz)
             </span>
           </button>
         )}

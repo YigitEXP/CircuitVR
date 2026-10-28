@@ -16,6 +16,35 @@ def _snippet(lines: List[str], line_no: int, radius: int = 0) -> str:
     return "\n".join(lines[lo:hi]).strip()
 
 
+def _is_ignored(raw_lines: List[str], line_no: int, rule_id: str) -> bool:
+    """Check if `// circuitvr-ignore <RULE_ID>` or `-- circuitvr-ignore <RULE_ID>` is present on line_no or line_no-1."""
+    if not rule_id:
+        return False
+    pat = re.compile(rf"circuitvr-ignore\s+(?:ALL|{re.escape(rule_id)})\b", re.I)
+    for idx in (line_no - 2, line_no - 1):
+        if 0 <= idx < len(raw_lines) and pat.search(raw_lines[idx]):
+            return True
+    # Also check first 5 lines for file-wide ignore
+    for idx in range(min(5, len(raw_lines))):
+        if re.search(rf"circuitvr-ignore-file\s+(?:ALL|{re.escape(rule_id)})\b", raw_lines[idx], re.I):
+            return True
+    return False
+
+
+def insert_ignore_pragma(raw_code: str, line_no: int, rule_id: str, is_vhdl: bool = False) -> Dict[str, Any]:
+    """Insert a `// circuitvr-ignore <RULE_ID>` comment right above `line_no`."""
+    lines = raw_code.splitlines()
+    idx = max(0, min(len(lines), line_no - 1))
+    target_line = lines[idx] if idx < len(lines) else ""
+    indent = re.match(r"^\s*", target_line).group(0) if target_line else ""
+    comment_prefix = "--" if is_vhdl else "//"
+    pragma = f"{indent}{comment_prefix} circuitvr-ignore {rule_id}"
+    if idx > 0 and pragma.strip() in lines[idx - 1]:
+        return {"applied": False, "content": raw_code}
+    lines.insert(idx, pragma)
+    return {"applied": True, "content": "\n".join(lines) + ("\n" if raw_code.endswith("\n") else "")}
+
+
 def analyze_optimizations(
     root: Path,
     files: List[str],
@@ -114,6 +143,10 @@ def analyze_optimizations(
                         "after": f"case {csig} is\n  ...\n  when others => null;\nend case;",
                         "can_autofix": False,
                     })
+            suggestions = [
+                s for s in suggestions
+                if s.get("file") != rel or not _is_ignored(raw_lines, int(s.get("line", 1)), str(s.get("rule_id", "")))
+            ]
             continue
 
         clean = strip_comments(raw)
@@ -379,6 +412,55 @@ def analyze_optimizations(
                     "after": f"(* fsm_encoding = \"one_hot\" *)\n{src_ln}",
                     "can_autofix": True,
                 })
+
+        # 8. Hardware Security (SecLinter): Combinational Self-Loops (Ring Oscillator / Side-Channel Leak)
+        for m in re.finditer(r"\bassign\s+([A-Za-z_]\w*)\s*=\s*([^;]+);", clean):
+            lhs, rhs = m.group(1), m.group(2)
+            if re.search(rf"\b{re.escape(lhs)}\b", rhs):
+                ln = _line_of(clean, m.start())
+                suggestions.append({
+                    "rule_id": "OPT-SEC-COMBLOOP",
+                    "category": "Donanım Güvenliği (SecLinter)",
+                    "impact": "yüksek",
+                    "title": f"Güvenlik Riski: '{lhs}' sinyalinde kombinasyonel öz-döngü (Ring Oscillator / DPA riski)!",
+                    "file": rel,
+                    "line": ln,
+                    "why": (
+                        "Bir kombinasyonel sinyalin doğrudan kendisine geri beslenmesi FPGA üzerinde kontrolsüz "
+                        "halka osilatör (ring oscillator), aşırı dinamik güç çekimi ve yan-kanal (Side-Channel) "
+                        "sızıntısına yol açar. Geri beslemeyi saatli bir Flip-Flop ('always_ff') üzerinden geçirin."
+                    ),
+                    "before": _snippet(raw_lines, ln, 0),
+                    "after": f"always_ff @(posedge clk) {lhs}_q <= {rhs.strip()};",
+                    "can_autofix": False,
+                })
+
+        # 9. Hardware Security (SecLinter): Suspicious Magic-Constant / Rare Counter Trigger (Time-bomb / Trojan check)
+        for m in re.finditer(r"\bif\s*\(\s*([A-Za-z_]\w*)\s*==\s*(\d+'h[0-9a-fA-F_]{6,}|\d{7,})\s*\)", clean):
+            sig_n, magic_lit = m.group(1), m.group(2)
+            ln = _line_of(clean, m.start())
+            suggestions.append({
+                "rule_id": "OPT-SEC-TRIGGER",
+                "category": "Donanım Güvenliği (SecLinter)",
+                "impact": "orta",
+                "title": f"SecLinter Denetimi: '{sig_n} == {magic_lit}' nadir tetiklenen sabit karşılaştırması",
+                "file": rel,
+                "line": ln,
+                "why": (
+                    "Standart simülasyon pencerelerinde nadiren ulaşılan yüksek bitli sabit eşitlik karşılaştırmaları "
+                    "(Time-Bomb / Cheat-Code paternleri) doğrulama kapsamından kaçabilir. Eşik değerini parametrik "
+                    "('parameter') tanımlayın ve eşitlik ('==') yerine '>=' sınır kontrolü tercih edin."
+                ),
+                "before": m.group(0),
+                "after": f"if ({sig_n} >= {magic_lit})",
+                "can_autofix": True,
+            })
+
+        # Filter out rules suppressed via `// circuitvr-ignore <RULE_ID>`
+        suggestions = [
+            s for s in suggestions
+            if s.get("file") != rel or not _is_ignored(raw_lines, int(s.get("line", 1)), str(s.get("rule_id", "")))
+        ]
 
     # Synthesis-driven insights (from Yosys stat + ltp)
     if synth_stats and synth_stats.get("success"):

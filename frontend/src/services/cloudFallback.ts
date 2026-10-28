@@ -1,5 +1,5 @@
 import {
-  AutoFixResponse, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, InspectedRtlInfo, LintResult, OptimizationReport, OptimizationSuggestion, ParetoCandidate, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
+  AutoFixResponse, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, FsmMachine, FsmReport, InspectedRtlInfo, LintResult, OptimizationReport, OptimizationSuggestion, ParetoCandidate, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
 } from '../types';
 import { UploadItem } from './api';
 
@@ -265,7 +265,11 @@ export const cloudFallback = {
       if (rel.toLowerCase().startsWith('tb/')) continue;
       const lines = raw.split('\n');
       lines.forEach((l, idx) => {
-        if (/\bcase\s*\(/.test(l) && !/\bunique\s+case\b/.test(l)) {
+        const prev = lines[idx - 1] ?? '';
+        const ignored = (rule: string) =>
+          new RegExp(`circuitvr-ignore\\s+(?:ALL|${rule})\\b`, 'i').test(l) ||
+          new RegExp(`circuitvr-ignore\\s+(?:ALL|${rule})\\b`, 'i').test(prev);
+        if (/\bcase\s*\(/.test(l) && !/\bunique\s+case\b/.test(l) && !ignored('OPT-MUX-CASE')) {
           suggestions.push({
             rule_id: 'OPT-MUX-CASE',
             category: 'Alan (LUT) & Hız / Area & Speed',
@@ -279,7 +283,7 @@ export const cloudFallback = {
             can_autofix: true,
           });
         }
-        if (/\balways\s*@\s*\(/.test(l)) {
+        if (/\balways\s*@\s*\(/.test(l) && !ignored('OPT-SV-ALWAYS')) {
           suggestions.push({
             rule_id: 'OPT-SV-ALWAYS',
             category: 'Güvenilirlik / Reliability',
@@ -293,7 +297,7 @@ export const cloudFallback = {
             can_autofix: true,
           });
         }
-        if (/std_logic_(?:arith|unsigned)/i.test(l)) {
+        if (/std_logic_(?:arith|unsigned)/i.test(l) && !ignored('OPT-VHDL-STD')) {
           suggestions.push({
             rule_id: 'OPT-VHDL-STD',
             category: 'IEEE 1076.3 VHDL Standard',
@@ -307,7 +311,7 @@ export const cloudFallback = {
             can_autofix: true,
           });
         }
-        if (/'event\s+and\s+\w+\s*=\s*'1'/i.test(l)) {
+        if (/'event\s+and\s+\w+\s*=\s*'1'/i.test(l) && !ignored('OPT-VHDL-EDGE')) {
           suggestions.push({
             rule_id: 'OPT-VHDL-EDGE',
             category: 'VHDL Sentez / Clock Edge',
@@ -363,6 +367,64 @@ export const cloudFallback = {
       fingerprint: String(Date.now()),
       optimization: this.optimize(path),
     };
+  },
+  optimizeIgnore(path: string, file: string, line: number, rule_id: string): AutoFixResponse {
+    const vw = ensureLoaded(path);
+    const raw = vw.files[file] ?? '';
+    const lines = raw.split('\n');
+    const idx = Math.max(0, Math.min(lines.length, line - 1));
+    const isVhdl = file.toLowerCase().endsWith('.vhd') || file.toLowerCase().endsWith('.vhdl');
+    const prefix = isVhdl ? '--' : '//';
+    const pragma = `    ${prefix} circuitvr-ignore ${rule_id}`;
+    lines.splice(idx, 0, pragma);
+    const content = lines.join('\n');
+    vw.files[file] = content;
+    return {
+      applied: true,
+      file,
+      content,
+      fingerprint: String(Date.now()),
+      optimization: this.optimize(path),
+    };
+  },
+  fsm(path: string): FsmReport {
+    const vw = ensureLoaded(path);
+    const fsms: FsmMachine[] = [];
+    for (const [rel, raw] of Object.entries(vw.files)) {
+      if (rel.toLowerCase().startsWith('tb/')) continue;
+      const enumM = raw.match(/\btypedef\s+enum\s+(?:logic\s*(?:\[[^\]]+\])?\s*)?\{([^}]+)\}\s*(\w+)/);
+      const vhdlM = raw.match(/\btype\s+(\w+)\s+is\s*\(([^)]+)\)/i);
+      let states: string[] = [];
+      let name = 'state';
+      let encoding = 'Binary';
+      if (enumM) {
+        states = enumM[1].split(',').map((s) => s.split('=')[0].trim()).filter(Boolean);
+        name = enumM[2];
+        encoding = /one_hot|onehot/i.test(raw) ? 'One-Hot' : 'Binary';
+      } else if (vhdlM) {
+        name = vhdlM[1];
+        states = vhdlM[2].split(',').map((s) => s.trim()).filter(Boolean);
+        encoding = 'VHDL Enum';
+      }
+      if (states.length >= 2) {
+        const transitions = states.map((s, i) => ({
+          from: s,
+          to: states[(i + 1) % states.length],
+          condition: 'clk_edge',
+        }));
+        fsms.push({
+          name,
+          file: rel,
+          encoding,
+          reset_state: states[0],
+          states,
+          transitions,
+          dead_states: [],
+          has_safe_default: /\bdefault\s*:|\bwhen\s+others\s*=>/i.test(raw),
+        });
+      }
+    }
+    return { total_fsms: fsms.length, fsms };
   },
   synth(path: string, top: string): SynthStats {
     const opt = this.optimize(path);

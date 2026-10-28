@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.services import eda_service, workspace_service as ws
-from app.services.optimizer_service import analyze_optimizations
+from app.services.optimizer_service import analyze_optimizations, apply_optimization_autofix
 from app.services.schematic_service import build_schematic
 from app.services.vcd_parser import parse_vcd
 from app.services.yosys_service import YosysService
@@ -286,6 +286,37 @@ def optimize(req: LintReq):
     root = _root(req.path)
     files = ws.compile_files(root, groups=("rtl",))
     return analyze_optimizations(root, files, req.top)
+
+
+class AutoFixReq(BaseModel):
+    path: str
+    file: str
+    line: int = 1
+    before: str
+    after: str
+
+
+@router.post("/optimize/autofix")
+def optimize_autofix(req: AutoFixReq):
+    root = _root(req.path)
+    try:
+        p = ws.resolve_in(root, req.file)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    if not p.is_file():
+        raise HTTPException(404, f"Dosya bulunamadı: {req.file}")
+    raw = p.read_text(encoding="utf-8", errors="replace")
+    res = apply_optimization_autofix(raw, req.line, req.before, req.after)
+    if res["applied"]:
+        p.write_text(res["content"], encoding="utf-8", newline="")
+    files = ws.compile_files(root, groups=("rtl",))
+    return {
+        "applied": res["applied"],
+        "file": req.file,
+        "content": res["content"],
+        "fingerprint": ws.fingerprint(root),
+        "optimization": analyze_optimizations(root, files),
+    }
 
 
 @router.post("/wave")

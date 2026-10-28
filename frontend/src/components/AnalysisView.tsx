@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Loader2, ShieldCheck, Cpu, Sparkles, ArrowRight, FileCode } from 'lucide-react';
-import { Diagnostic, LintResult, OptimizationReport, SynthStats, WorkspaceInfo } from '../types';
-import { ws } from '../services/api';
+import { Loader2, ShieldCheck, Cpu, Sparkles, ArrowRight, FileCode, Wand2, CheckCircle2 } from 'lucide-react';
+import { Diagnostic, LintResult, OptimizationReport, OptimizationSuggestion, SynthStats, WorkspaceInfo } from '../types';
+import { errMsg, ws } from '../services/api';
 import { useI18n } from '../i18n';
 
 interface Props {
@@ -13,6 +13,7 @@ interface Props {
   onLint: () => void;
   onSynth: () => void;
   onGoto: (d: Diagnostic) => void;
+  onAutoFixed?: (file: string, content: string, line: number) => void;
 }
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -31,9 +32,12 @@ const IMPACT_STYLE: Record<string, string> = {
   'bilgi': 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
 };
 
-export default function AnalysisView({ info, top, lint, stats, busy, onLint, onSynth, onGoto }: Props) {
-  const { t: tr } = useI18n();
+export default function AnalysisView({ info, top, lint, stats, busy, onLint, onSynth, onGoto, onAutoFixed }: Props) {
+  const { lang, t: tr } = useI18n();
+  const isTr = lang === 'tr';
   const [opt, setOpt] = useState<OptimizationReport | null>(null);
+  const [fixingIdx, setFixingIdx] = useState<number | null>(null);
+  const [fixMsg, setFixMsg] = useState<string>('');
 
   useEffect(() => {
     if (stats?.optimization) {
@@ -43,12 +47,40 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
     ws.optimize(info.root, top || undefined).then(setOpt).catch(() => undefined);
   }, [info.root, info.fingerprint, top, stats]);
 
+  const handleApplyFix = async (s: OptimizationSuggestion, idx: number) => {
+    if (!s.file) return;
+    setFixingIdx(idx);
+    setFixMsg('');
+    try {
+      const res = await ws.optimizeAutofix(info.root, s.file, s.line, s.before, s.after);
+      if (res.applied) {
+        setOpt(res.optimization);
+        setFixMsg(
+          isTr
+            ? `✓ Otomatik düzeltme uygulandı: ${s.file}:${s.line} (${s.rule_id || s.category})`
+            : `✓ Auto-fix applied to ${s.file}:${s.line} (${s.rule_id || s.category})`
+        );
+        onAutoFixed?.(res.file, res.content, s.line);
+      } else {
+        setFixMsg(
+          isTr
+            ? `⚠ İlgili satır zaten değiştirilmiş olabilir; dosyayı açıp kontrol edin (${s.file}:${s.line}).`
+            : `⚠ Target snippet already modified; please inspect ${s.file}:${s.line}.`
+        );
+      }
+    } catch (e) {
+      setFixMsg(errMsg(e));
+    } finally {
+      setFixingIdx(null);
+    }
+  };
+
   const rtlFiles = info.files.filter((f) => f.group === 'rtl' && !f.is_header);
   const tbFiles = info.files.filter((f) => f.group === 'tb' && !f.is_header);
   const lines = info.files.reduce((a, f) => a + f.lines, 0);
   const cells = stats?.cells ? Object.entries(stats.cells).sort((a, b) => b[1] - a[1]) : [];
   const maxCell = cells.length ? cells[0][1] : 1;
-  const report = stats?.optimization ?? opt;
+  const report = opt ?? stats?.optimization ?? null;
 
   return (
     <div className="h-full overflow-auto p-4 space-y-4">
@@ -60,7 +92,7 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
         <Stat label={tr.submodules} value={top && info.modules[top] ? info.modules[top].children : 0} />
       </div>
 
-      {/* RTL Optimization Advisor */}
+      {/* RTL Optimization Advisor 2.0 */}
       <div className="card space-y-3 border-indigo-500/30">
         <div className="flex items-center gap-3 flex-wrap">
           <h2 className="font-semibold flex items-center gap-2 text-indigo-300">
@@ -84,6 +116,13 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
           </span>
         </div>
 
+        {fixMsg && (
+          <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-emerald-950/30 border border-emerald-500/40 text-emerald-200 font-mono">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <span>{fixMsg}</span>
+          </div>
+        )}
+
         {report && (
           <>
             <p className="text-xs text-slate-300">{report.summary}</p>
@@ -99,18 +138,38 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
                       <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border font-semibold ${IMPACT_STYLE[s.impact] ?? IMPACT_STYLE.bilgi}`}>
                         {tr.impact}: {s.impact}
                       </span>
+                      {s.rule_id && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 font-mono">
+                          {s.rule_id}
+                        </span>
+                      )}
                       <span className="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
                         {s.category}
                       </span>
                       <span className="font-medium text-sm text-slate-100">{s.title}</span>
-                      {s.file && (
-                        <button
-                          onClick={() => onGoto({ severity: 'warning', file: s.file, line: s.line, message: s.title })}
-                          className="ml-auto flex items-center gap-1 text-xs font-mono text-indigo-400 hover:text-indigo-300 hover:underline"
-                        >
-                          <FileCode className="w-3.5 h-3.5" /> {s.file}:{s.line}
-                        </button>
-                      )}
+
+                      <div className="ml-auto flex items-center gap-2">
+                        {s.can_autofix && s.file && (
+                          <button
+                            type="button"
+                            disabled={fixingIdx !== null}
+                            onClick={() => handleApplyFix(s, idx)}
+                            className="px-2.5 py-1 rounded-md bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-500/40 text-emerald-200 text-xs font-medium flex items-center gap-1.5 transition"
+                            title={isTr ? 'Önerilen düzeltmeyi doğrudan kaynak dosyaya uygula' : 'Apply suggested fix directly to source file'}
+                          >
+                            {fixingIdx === idx ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5 text-emerald-400" />}
+                            {isTr ? 'Düzeltmeyi Uygula' : 'Apply Fix'}
+                          </button>
+                        )}
+                        {s.file && (
+                          <button
+                            onClick={() => onGoto({ severity: 'warning', file: s.file, line: s.line, message: s.title })}
+                            className="flex items-center gap-1 text-xs font-mono text-indigo-400 hover:text-indigo-300 hover:underline"
+                          >
+                            <FileCode className="w-3.5 h-3.5" /> {s.file}:{s.line}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-slate-400 leading-relaxed">{s.why}</p>
                     <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-2 items-stretch pt-1">

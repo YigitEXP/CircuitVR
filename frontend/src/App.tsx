@@ -13,6 +13,7 @@ import { errMsg, ws, UploadItem } from './services/api';
 import ToolsDialog from './components/ToolsDialog';
 import DeveloperModal from './components/DeveloperModal';
 import OnboardingModal, { ONBOARDING_STORAGE_KEY } from './components/OnboardingModal';
+import CommandPalette from './components/CommandPalette';
 import { useI18n } from './i18n';
 import { APP_BUILD_TIME, APP_VERSION } from './version';
 import {
@@ -42,6 +43,7 @@ function App() {
   const [opening, setOpening] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showDev, setShowDev] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
   const [showTour, setShowTour] = useState<boolean>(
     () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== '1'
   );
@@ -274,6 +276,11 @@ function App() {
   /* ---------- shortcuts ---------- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowPalette((s) => !s);
+        return;
+      }
       if (busy) return;
       if (e.key === 'F5') { e.preventDefault(); runSim(); }
       else if (e.key === 'F6') { e.preventDefault(); runSchematic(); }
@@ -329,6 +336,20 @@ function App() {
       onOpenTools={() => setShowTools(true)}
     />
   );
+  const paletteDialog = showPalette && (
+    <CommandPalette
+      info={info}
+      onClose={() => setShowPalette(false)}
+      onSelectView={(v) => setView(v)}
+      onOpenFile={(p) => openFile(p)}
+      onSimulate={runSim}
+      onSchematic={runSchematic}
+      onLint={runLint}
+      onSynth={runSynth}
+      onStartTour={() => setShowTour(true)}
+      onShowTools={() => setShowTools(true)}
+    />
+  );
 
   if (!info) {
     return (
@@ -337,6 +358,7 @@ function App() {
         {toolsDialog}
         {devDialog}
         {tourDialog}
+        {paletteDialog}
         <WelcomeScreen
           tools={tools}
           error={welcomeErr}
@@ -357,12 +379,14 @@ function App() {
       {toolsDialog}
       {devDialog}
       {tourDialog}
+      {paletteDialog}
       <TopBar
         info={info} top={top} tb={tb} simTime={simTime} autoLint={autoLint} tools={tools} busy={busy}
         onTop={setTop} onTb={setTb} onSimTime={setSimTime} onAutoLint={setAutoLint}
         onClose={closeWorkspace} onRefresh={() => rescan().catch((e) => log('error', errMsg(e)))}
         onSimulate={runSim} onSchematic={runSchematic} onLint={runLint}
         onAddFiles={addFiles} onShowTools={() => setShowTools(true)} onShowDev={() => setShowDev(true)}
+        onOpenPalette={() => setShowPalette(true)}
       />
       <div className="flex-1 flex min-h-0">
         <aside className="w-64 flex-shrink-0 border-r glass">
@@ -429,6 +453,12 @@ function App() {
               <AnalysisView
                 info={info} top={top} lint={lint} stats={stats} busy={busy}
                 onLint={runLint} onSynth={runSynth} onGoto={gotoDiag}
+                onAutoFixed={(fixedFile, newContent, lineNo) => {
+                  setFile((cur) => (cur && cur.path === fixedFile ? { path: fixedFile, content: newContent, saved: newContent } : cur));
+                  setStale(true);
+                  rescan().catch(() => undefined);
+                  log('ok', `Otomatik RTL düzeltmesi uygulandı: ${fixedFile}:${lineNo}`);
+                }}
               />
             )}
             {view === 'edgeai' && (

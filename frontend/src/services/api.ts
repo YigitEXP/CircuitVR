@@ -1,6 +1,6 @@
 import axios from 'axios';
 import {
-  DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, InspectedRtlInfo, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
+  AutoFixResponse, DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, InspectedRtlInfo, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
 } from '../types';
 import { cloudFallback } from './cloudFallback';
 
@@ -98,6 +98,13 @@ export const ws = {
       .post<OptimizationReport>(`${P}/optimize`, { path, top })
       .then((r) => r.data)
       .catch(() => cloudFallback.optimize(path));
+  },
+  optimizeAutofix: (path: string, file: string, line: number, before: string, after: string) => {
+    if (isCloudPath(path)) return Promise.resolve(cloudFallback.optimizeAutofix(path, file, line, before, after));
+    return api
+      .post<AutoFixResponse>(`${P}/optimize/autofix`, { path, file, line, before, after })
+      .then((r) => r.data)
+      .catch(() => cloudFallback.optimizeAutofix(path, file, line, before, after));
   },
   wave: (path: string, vcd?: string) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.wave());

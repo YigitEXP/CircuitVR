@@ -433,6 +433,58 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     est_luts = k_len * mult_lut_each + acc_width * 3 + (64 if activation == "sigmoid_lut" else 16)
     est_ffs = k_len * total_bits + acc_width + total_bits + 4
 
+    # 5. Pareto Bit-Width Auto-Search (4-bit to 16-bit candidates)
+    candidates = [(2, 3), (2, 4), (2, 6), (2, 8), (3, 9), (3, 11), (4, 12)]
+    pareto_front: List[Dict[str, Any]] = []
+    rec_chosen = False
+    for cm, cn in candidates:
+        cw = cm + cn
+        cscale = 1 << cn
+        cq_min = -(1 << (cw - 1))
+        cq_max = (1 << (cw - 1)) - 1
+        cw_int: List[int] = []
+        cw_flt: List[float] = []
+        c_clip = 0
+        for w in weights:
+            qi, qf, cl = _quantize_val(w, cm, cn, rounding)
+            if cl:
+                c_clip += 1
+            cw_int.append(qi)
+            cw_flt.append(qf)
+        cb_int, _, _ = _quantize_val(bias, cm, cn, rounding)
+        c_w_sqnr = _sqnr_db(weights, cw_flt)
+        c_win_fx = [0] * k_len
+        c_out_fx: List[float] = []
+        c_round = (1 << (cn - 1)) if (rounding == "round" and cn > 0) else 0
+        for s in sig_float:
+            si, _, _ = _quantize_val(s, cm, cn, rounding)
+            c_win_fx = [si] + c_win_fx[:-1]
+            c_acc = sum(c_win_fx[j] * cw_int[j] for j in range(k_len)) + (cb_int << cn)
+            c_sh = (c_acc + c_round) >> cn
+            c_sat = max(cq_min, min(cq_max, c_sh))
+            c_y = _apply_activation_fixed(c_sat, activation, cn, cq_min, cq_max)
+            c_out_fx.append(c_y / float(cscale))
+        c_inf_sqnr = _sqnr_db(out_fp_list, c_out_fx)
+        c_dsp = 0 if cw <= 6 else (parallel_pes if cw <= 18 else parallel_pes * 2)
+        c_mult_lut = cw * cw * 2 if cw <= 6 else (12 if cw <= 18 else 28)
+        c_acc_w = 2 * cw + guard_bits
+        c_luts = k_len * c_mult_lut + c_acc_w * 3 + 16
+        is_rec = (not rec_chosen) and (c_clip == 0) and (c_inf_sqnr >= 30.0)
+        if is_rec:
+            rec_chosen = True
+        pareto_front.append({
+            "q_format": f"Q{cm}.{cn}",
+            "int_bits": cm,
+            "frac_bits": cn,
+            "total_bits": cw,
+            "weight_sqnr_db": c_w_sqnr,
+            "inference_sqnr_db": c_inf_sqnr,
+            "dsp_blocks": c_dsp,
+            "est_luts": c_luts,
+            "clipped": c_clip,
+            "recommended": is_rec,
+        })
+
     return {
         "q_format": f"Q{int_bits}.{frac_bits}",
         "total_bits": total_bits,
@@ -452,6 +504,7 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "bias_float": round(bias_qf, 6),
         "threshold_int": thresh_int,
         "threshold_float": round(thresh_qf, 6),
+        "pareto_front": pareto_front,
         "bit_growth": {
             "input_q": f"Q{int_bits}.{frac_bits} ({total_bits}-bit)",
             "weight_q": f"Q{int_bits}.{frac_bits} ({total_bits}-bit)",

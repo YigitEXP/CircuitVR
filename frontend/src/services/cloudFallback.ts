@@ -1,5 +1,5 @@
 import {
-  EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, InspectedRtlInfo, LintResult, OptimizationReport, OptimizationSuggestion, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
+  AutoFixResponse, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, InspectedRtlInfo, LintResult, OptimizationReport, OptimizationSuggestion, ParetoCandidate, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
 } from '../types';
 import { UploadItem } from './api';
 
@@ -267,6 +267,7 @@ export const cloudFallback = {
       lines.forEach((l, idx) => {
         if (/\bcase\s*\(/.test(l) && !/\bunique\s+case\b/.test(l)) {
           suggestions.push({
+            rule_id: 'OPT-MUX-CASE',
             category: 'Alan (LUT) & Hız / Area & Speed',
             impact: 'düşük',
             title: `'case' yerine 'unique case' ile paralel MUX sentezi`,
@@ -275,10 +276,12 @@ export const cloudFallback = {
             why: 'Durumlar birbirini dışlıyorsa unique case paralel MUX sentezlenmesini sağlar.',
             before: l.trim(),
             after: l.trim().replace(/\bcase\b/, 'unique case'),
+            can_autofix: true,
           });
         }
         if (/\balways\s*@\s*\(/.test(l)) {
           suggestions.push({
+            rule_id: 'OPT-SV-ALWAYS',
             category: 'Güvenilirlik / Reliability',
             impact: 'orta',
             title: `Klasik 'always @' yerine 'always_ff / always_comb' kullanın`,
@@ -287,10 +290,12 @@ export const cloudFallback = {
             why: 'SystemVerilog always_ff / always_comb blokları istenmeyen latch çıkarımını engeller.',
             before: l.trim(),
             after: l.trim().replace(/\balways\s*@/, 'always_ff @'),
+            can_autofix: true,
           });
         }
         if (/std_logic_(?:arith|unsigned)/i.test(l)) {
           suggestions.push({
+            rule_id: 'OPT-VHDL-STD',
             category: 'IEEE 1076.3 VHDL Standard',
             impact: 'orta',
             title: `Standart dışı 'std_logic_unsigned' yerine 'ieee.numeric_std.all' kullanın`,
@@ -299,10 +304,12 @@ export const cloudFallback = {
             why: 'numeric_std gerçek IEEE standardıdır ve signed/unsigned çakışmalarını önler.',
             before: l.trim(),
             after: 'use ieee.numeric_std.all;',
+            can_autofix: true,
           });
         }
         if (/'event\s+and\s+\w+\s*=\s*'1'/i.test(l)) {
           suggestions.push({
+            rule_id: 'OPT-VHDL-EDGE',
             category: 'VHDL Sentez / Clock Edge',
             impact: 'düşük',
             title: `Klasik clk'event yerine 'rising_edge(clk)' kullanın`,
@@ -311,6 +318,7 @@ export const cloudFallback = {
             why: 'rising_edge(clk) yalnızca gerçek 0->1 geçişlerini algılar.',
             before: l.trim(),
             after: 'if rising_edge(clk) then',
+            can_autofix: true,
           });
         }
       });
@@ -321,6 +329,39 @@ export const cloudFallback = {
       summary: 'Tarayıcı içi statik RTL ve sentez danışmanı analizi tamamlandı.',
       total: suggestions.length,
       suggestions,
+    };
+  },
+  optimizeAutofix(path: string, file: string, line: number, before: string, after: string): AutoFixResponse {
+    const vw = ensureLoaded(path);
+    const raw = vw.files[file] ?? '';
+    const lines = raw.split('\n');
+    const idx = Math.max(0, Math.min(lines.length - 1, line - 1));
+    let applied = false;
+    const b = before.trim();
+    const a = after.trim();
+    if (b && a && lines[idx]?.includes(b)) {
+      lines[idx] = lines[idx].replace(b, a);
+      applied = true;
+    } else if (b && a && raw.includes(b)) {
+      const patched = raw.replace(b, a);
+      vw.files[file] = patched;
+      applied = true;
+      return {
+        applied: true,
+        file,
+        content: patched,
+        fingerprint: String(Date.now()),
+        optimization: this.optimize(path),
+      };
+    }
+    const content = applied ? lines.join('\n') : raw;
+    if (applied) vw.files[file] = content;
+    return {
+      applied,
+      file,
+      content,
+      fingerprint: String(Date.now()),
+      optimization: this.optimize(path),
     };
   },
   synth(path: string, top: string): SynthStats {
@@ -380,6 +421,13 @@ export const cloudFallback = {
         { id: 'e5', net: 'state_fb', width: 2, source: 'reg_state', sourcePort: 'Q', target: 'mux_next', targetPort: 'A' },
       ],
       stats: { cells: 2, nets: 5, ports: 3, by_type: { '$pmux': 1, '$adff': 1 } },
+      critical_path: {
+        depth: 1,
+        delay_ns: 1.02,
+        fmax_mhz: 485.0,
+        nodes: ['reg_state', 'mux_next'],
+        edges: ['e5', 'e3'],
+      },
     };
   },
   simulate(): SimResult {
@@ -510,6 +558,36 @@ export const cloudFallback = {
     const pes = Math.max(1, Math.ceil(kLen / (cfg.reuse_factor || 1)));
     const clk = cfg.clock_mhz || 100;
     const cyc = cfg.reuse_factor || 1;
+    const cands: [number, number][] = [[2, 3], [2, 4], [2, 6], [2, 8], [3, 9], [3, 11], [4, 12]];
+    let recChosen = false;
+    const pareto_front: ParetoCandidate[] = cands.map(([cm, cn]) => {
+      const cw = cm + cn;
+      const cs = 1 << cn;
+      const cMin = -(1 << (cw - 1));
+      const cMax = (1 << (cw - 1)) - 1;
+      let cClip = 0;
+      const cwF = weights.map((w) => {
+        const r = cfg.rounding === 'trunc' ? Math.floor(w * cs) : Math.round(w * cs);
+        if (r < cMin || r > cMax) cClip++;
+        return Math.max(cMin, Math.min(cMax, r)) / cs;
+      });
+      const wSq = sqnr(weights, cwF);
+      const infSq = Number(Math.max(8, Math.min(99.9, wSq - 1.5)).toFixed(2));
+      const rec = !recChosen && cClip === 0 && infSq >= 30;
+      if (rec) recChosen = true;
+      return {
+        q_format: `Q${cm}.${cn}`,
+        int_bits: cm,
+        frac_bits: cn,
+        total_bits: cw,
+        weight_sqnr_db: wSq,
+        inference_sqnr_db: infSq,
+        dsp_blocks: cw <= 6 ? 0 : cw <= 18 ? pes : pes * 2,
+        est_luts: kLen * (cw <= 6 ? cw * cw * 2 : 14) + (2 * cw + guardBits) * 3,
+        clipped: cClip,
+        recommended: rec,
+      };
+    });
     return {
       q_format: `Q${intBits}.${fracBits}`,
       total_bits: totalBits,
@@ -529,6 +607,7 @@ export const cloudFallback = {
       bias_float: Number(bQ.qf.toFixed(6)),
       threshold_int: tQ.qi,
       threshold_float: Number(tQ.qf.toFixed(6)),
+      pareto_front,
       bit_growth: {
         input_q: `Q${intBits}.${fracBits} (${totalBits}-bit)`,
         weight_q: `Q${intBits}.${fracBits} (${totalBits}-bit)`,

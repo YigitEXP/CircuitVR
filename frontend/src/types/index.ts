@@ -1,7 +1,21 @@
 export interface SchematicPort { id: string; name: string; dir: 'input' | 'output' | 'inout'; width: number; }
 export interface SchematicNode { id: string; kind: 'port_in' | 'port_out' | 'comb' | 'sequential' | 'mux' | 'instance'; type: string; label: string; typeLabel?: string; params: Record<string, any>; ports: SchematicPort[]; }
 export interface SchematicEdge { id: string; net: string; width: number; source: string; sourcePort: string; target: string; targetPort: string; }
-export interface SchematicGraph { module: string; modules: string[]; nodes: SchematicNode[]; edges: SchematicEdge[]; stats: { cells: number; nets: number; ports: number; by_type: Record<string, number> }; }
+export interface CriticalPathInfo {
+  depth: number;
+  delay_ns: number;
+  fmax_mhz: number;
+  nodes: string[];
+  edges: string[];
+}
+export interface SchematicGraph {
+  module: string;
+  modules: string[];
+  nodes: SchematicNode[];
+  edges: SchematicEdge[];
+  stats: { cells: number; nets: number; ports: number; by_type: Record<string, number> };
+  critical_path?: CriticalPathInfo;
+}
 
 export interface WsModule {
   name: string;
@@ -72,6 +86,7 @@ export interface LintResult {
 }
 
 export interface OptimizationSuggestion {
+  rule_id?: string;
   category: string;
   impact: 'yüksek' | 'orta' | 'düşük' | 'bilgi';
   title: string;
@@ -80,6 +95,15 @@ export interface OptimizationSuggestion {
   why: string;
   before: string;
   after: string;
+  can_autofix?: boolean;
+}
+
+export interface AutoFixResponse {
+  applied: boolean;
+  file: string;
+  content: string;
+  fingerprint: string;
+  optimization: OptimizationReport;
 }
 
 export interface OptimizationReport {
@@ -169,6 +193,19 @@ export interface QuantizedWeightItem {
   sv_lit: string;
 }
 
+export interface ParetoCandidate {
+  q_format: string;
+  int_bits: number;
+  frac_bits: number;
+  total_bits: number;
+  weight_sqnr_db: number;
+  inference_sqnr_db: number;
+  dsp_blocks: number;
+  est_luts: number;
+  clipped: number;
+  recommended: boolean;
+}
+
 export interface EdgeAiAnalysis {
   q_format: string;
   total_bits: number;
@@ -188,6 +225,7 @@ export interface EdgeAiAnalysis {
   bias_float: number;
   threshold_int: number;
   threshold_float: number;
+  pareto_front?: ParetoCandidate[];
   bit_growth: {
     input_q: string;
     weight_q: string;

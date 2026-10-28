@@ -813,6 +813,56 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               <div className="text-[10px] text-slate-400">{analysis.bit_growth.formula}</div>
             </div>
           )}
+
+          {analysis?.pareto_front && analysis.pareto_front.length > 0 && (
+            <div className="bg-indigo-950/20 border border-indigo-500/30 rounded-lg p-2.5 space-y-2 text-[11px]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-indigo-300">
+                  {isTr ? '🎯 Pareto SQNR vs LUT Otomatik Bit-Genişliği Analizi' : '🎯 Pareto SQNR vs LUT Auto-Tuner'}
+                </span>
+                {(() => {
+                  const rec = analysis.pareto_front.find((p) => p.recommended);
+                  if (!rec) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setCfg((c) => ({ ...c, int_bits: rec.int_bits, frac_bits: rec.frac_bits }))}
+                      className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[10px] transition"
+                    >
+                      {isTr ? `Oto-Seç: ${rec.q_format} (${rec.inference_sqnr_db} dB)` : `Auto-Tune: ${rec.q_format} (${rec.inference_sqnr_db} dB)`}
+                    </button>
+                  );
+                })()}
+              </div>
+              <div className="flex flex-wrap gap-1.5 font-mono">
+                {analysis.pareto_front.map((p) => {
+                  const active = cfg.int_bits === p.int_bits && cfg.frac_bits === p.frac_bits;
+                  return (
+                    <button
+                      key={p.q_format}
+                      type="button"
+                      onClick={() => setCfg((c) => ({ ...c, int_bits: p.int_bits, frac_bits: p.frac_bits }))}
+                      className={`px-2 py-1 rounded border text-[10px] transition flex items-center gap-1 ${
+                        active
+                          ? 'bg-indigo-600/30 border-indigo-400 text-white'
+                          : p.recommended
+                          ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/25'
+                          : 'bg-darker border-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                      title={`SQNR: ${p.inference_sqnr_db} dB | ~${p.est_luts} LUT | Clip: ${p.clipped}`}
+                    >
+                      <span>{p.q_format}</span>
+                      <span className={p.inference_sqnr_db >= 30 ? 'text-emerald-400' : 'text-amber-400'}>
+                        {p.inference_sqnr_db}dB
+                      </span>
+                      <span className="text-slate-500">({p.est_luts}L)</span>
+                      {p.recommended && <span className="text-emerald-300">★</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Column 3: Roofline & Silicon Resource Estimator */}

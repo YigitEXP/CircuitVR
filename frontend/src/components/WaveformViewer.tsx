@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Maximize2, ZoomIn, ZoomOut, ListPlus, X, Loader2 } from 'lucide-react';
+import { Play, Maximize2, ZoomIn, ZoomOut, ListPlus, X, Loader2, Activity, Ruler } from 'lucide-react';
 import { WaveData, WaveSignal } from '../types';
+import { useI18n } from '../i18n';
 
-const ROW_H = 30;
+const ROW_H = 34;
 const RULER_H = 28;
 const NAME_W = 280;
 
-type Radix = 'hex' | 'bin' | 'dec';
+type Radix = 'hex' | 'bin' | 'dec' | 'signed';
 
 interface Props {
   wave: WaveData | null;
@@ -44,28 +45,51 @@ function lastAtOrBefore(ch: [number, string][], t: number): number {
   return ans;
 }
 
-function formatValue(bits: string, width: number, radix: Radix): string {
-  if (/[xz]/.test(bits)) {
-    if (radix === 'bin') return bits;
-    return /^z+$/.test(bits) ? 'z' : 'x';
+function toSignedNumber(bits: string, width: number): number | null {
+  if (/[xz]/i.test(bits) || width <= 0) return null;
+  const padded = bits.padStart(width, bits[0] === '1' ? '0' : bits[0] ?? '0');
+  try {
+    const u = BigInt('0b' + (padded || '0'));
+    const signBit = 1n << BigInt(Math.max(0, width - 1));
+    const fullRange = 1n << BigInt(width);
+    const s = (u & signBit) !== 0n ? u - fullRange : u;
+    return Number(s);
+  } catch {
+    return null;
   }
-  // VCD rule: left-extend with 0 when the MSB is 1, otherwise with the MSB itself
+}
+
+function formatValue(bits: string, width: number, radix: Radix): string {
+  if (/[xz]/i.test(bits)) {
+    if (radix === 'bin') return bits;
+    return /^z+$/i.test(bits) ? 'z' : 'x';
+  }
   const padded = bits.padStart(width, bits[0] === '1' ? '0' : bits[0] ?? '0');
   if (radix === 'bin') return padded;
   try {
     const n = BigInt('0b' + (padded || '0'));
-    return radix === 'hex' ? n.toString(16).toUpperCase().padStart(Math.ceil(width / 4), '0') : n.toString(10);
+    if (radix === 'hex') return n.toString(16).toUpperCase().padStart(Math.ceil(width / 4), '0');
+    if (radix === 'signed' && width > 1) {
+      const signBit = 1n << BigInt(width - 1);
+      const s = (n & signBit) !== 0n ? n - (1n << BigInt(width)) : n;
+      return s.toString(10);
+    }
+    return n.toString(10);
   } catch {
     return bits;
   }
 }
 
 export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Props) {
+  const { lang } = useI18n();
+  const isTr = lang === 'tr';
   const [selected, setSelected] = useState<string[]>([]);
   const [view, setView] = useState<[number, number]>([0, 100]);
   const [hover, setHover] = useState<number | null>(null);
-  const [pinned, setPinned] = useState<number | null>(null);
+  const [markerA, setMarkerA] = useState<number | null>(null);
+  const [markerB, setMarkerB] = useState<number | null>(null);
   const [radix, setRadix] = useState<Radix>('hex');
+  const [analogMode, setAnalogMode] = useState<boolean>(false);
   const [picker, setPicker] = useState(false);
   const [filter, setFilter] = useState('');
   const [width, setWidth] = useState(600);
@@ -84,7 +108,6 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
   const psTick = useMemo(() => psPerTick(wave?.timescale ?? ''), [wave]);
   const endT = Math.max(wave?.end_time ?? 1, 1);
 
-  // Default selection + fit when new data arrives
   useEffect(() => {
     if (!wave) { setSelected([]); return; }
     const depth = (s: WaveSignal) => s.scope.split('.').length;
@@ -97,10 +120,10 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
       .map((s) => s.name);
     setSelected(picks);
     setView([0, endT * 1.02]);
-    setPinned(null);
+    setMarkerA(null);
+    setMarkerB(null);
   }, [wave, endT]);
 
-  // Track canvas container width
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -115,7 +138,7 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
 
   const clampView = useCallback((t0: number, t1: number): [number, number] => {
     const maxSpan = endT * 1.02;
-    let span = Math.min(Math.max(t1 - t0, 4), maxSpan);
+    const span = Math.min(Math.max(t1 - t0, 4), maxSpan);
     let a = t0;
     if (a < 0) a = 0;
     if (a + span > maxSpan) a = maxSpan - span;
@@ -131,7 +154,6 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
     });
   }, [clampView]);
 
-  // Wheel zoom/pan (non-passive so we can prevent page scroll)
   useEffect(() => {
     const cv = waveCv.current;
     if (!cv) return;
@@ -160,13 +182,22 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
     return view[0] + ((clientX - rect.left) / rect.width) * (view[1] - view[0]);
   };
 
-  const cursorT = pinned ?? hover;
+  const cursorT = markerA ?? hover;
   const valueAtCursor = (s: WaveSignal): string => {
     const ch = wave?.changes[s.id] ?? [];
     const t = cursorT ?? endT;
     const i = lastAtOrBefore(ch, t);
     return i < 0 ? '—' : formatValue(ch[i][1], s.width, radix);
   };
+
+  const deltaInfo = useMemo(() => {
+    if (markerA === null || markerB === null) return null;
+    const dtTicks = Math.abs(markerB - markerA);
+    const dtStr = formatTime(dtTicks, psTick);
+    const dtPs = dtTicks * psTick;
+    const freqMhz = dtPs > 0 ? (1e6 / dtPs).toFixed(2) : null;
+    return { dtStr, freqMhz };
+  }, [markerA, markerB, psTick]);
 
   // ---- drawing ----
   useEffect(() => {
@@ -192,9 +223,26 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
         g.beginPath(); g.moveTo(x, RULER_H - 8); g.lineTo(x, RULER_H); g.stroke();
         g.fillText(formatTime(t, psTick), x + 3, 12);
       }
-      if (cursorT !== null) {
-        const x = X(cursorT);
-        g.fillStyle = pinned !== null ? '#facc15' : '#e2e8f0';
+      if (markerA !== null && markerB !== null) {
+        const xa = X(markerA), xb = X(markerB);
+        g.fillStyle = 'rgba(250, 204, 21, 0.14)';
+        g.fillRect(Math.min(xa, xb), 0, Math.abs(xb - xa), RULER_H);
+      }
+      if (markerA !== null) {
+        const x = X(markerA);
+        g.fillStyle = '#facc15';
+        g.fillRect(x - 1, 0, 2, RULER_H);
+        g.fillText('A', x + 3, RULER_H - 3);
+      }
+      if (markerB !== null) {
+        const x = X(markerB);
+        g.fillStyle = '#f97316';
+        g.fillRect(x - 1, 0, 2, RULER_H);
+        g.fillText('B', x + 3, RULER_H - 3);
+      }
+      if (hover !== null) {
+        const x = X(hover);
+        g.fillStyle = '#e2e8f0';
         g.fillRect(x - 0.5, 0, 1, RULER_H);
       }
     }
@@ -208,7 +256,6 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
     g.scale(dpr, dpr);
     g.fillStyle = '#020617'; g.fillRect(0, 0, width, rowsHeight);
 
-    // grid
     const raw = span / Math.max(width / 110, 1);
     const pow = Math.pow(10, Math.floor(Math.log10(raw)));
     const step = [1, 2, 5, 10].map((m) => m * pow).find((s) => s >= raw) ?? pow * 10;
@@ -221,13 +268,48 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
     g.textBaseline = 'middle';
     rows.forEach((s, ri) => {
       const ch = wave.changes[s.id] ?? [];
-      const yTop = ri * ROW_H + 6, yBot = ri * ROW_H + ROW_H - 6, yMid = (yTop + yBot) / 2;
+      const yTop = ri * ROW_H + 5, yBot = ri * ROW_H + ROW_H - 5, yMid = (yTop + yBot) / 2;
       g.strokeStyle = '#0f1b33';
       g.beginPath(); g.moveTo(0, (ri + 1) * ROW_H - 0.5); g.lineTo(width, (ri + 1) * ROW_H - 0.5); g.stroke();
       if (!ch.length) return;
 
       const isBit = s.width === 1;
       let k = Math.max(lastAtOrBefore(ch, t0), 0);
+
+      // Analog rendering for multi-bit signals when analogMode is enabled
+      if (!isBit && analogMode) {
+        const nums = ch.map(([, v]) => toSignedNumber(v, s.width)).filter((v): v is number => v !== null);
+        const minV = nums.length ? Math.min(...nums, 0) : -1;
+        const maxV = nums.length ? Math.max(...nums, 1) : 1;
+        const vSpan = Math.max(1, maxV - minV);
+        const toAY = (v: number) => yBot - ((v - minV) / vSpan) * (yBot - yTop);
+
+        g.strokeStyle = '#10b981';
+        g.lineWidth = 1.6;
+        g.beginPath();
+        let started = false;
+        let lastY = yMid;
+        for (let idx = k; idx < ch.length; idx++) {
+          const [ts, val] = ch[idx];
+          if (ts > t1) break;
+          const te = idx + 1 < ch.length ? ch[idx + 1][0] : Math.max(endT, t1);
+          const x1 = Math.max(X(ts), 0), x2 = Math.min(X(te), width);
+          const num = toSignedNumber(val, s.width);
+          const py = num !== null ? toAY(num) : yMid;
+          if (!started) {
+            g.moveTo(x1, py);
+            started = true;
+          } else {
+            g.lineTo(x1, lastY);
+            g.lineTo(x1, py);
+          }
+          g.lineTo(x2, py);
+          lastY = py;
+        }
+        g.stroke();
+        return;
+      }
+
       let prevY: number | null = null;
       for (; k < ch.length; k++) {
         const [ts, val] = ch[k];
@@ -247,7 +329,7 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
           if (bad) { g.fillStyle = 'rgba(239,68,68,0.15)'; g.fillRect(x1, yTop, x2 - x1, yBot - yTop); }
           prevY = y;
         } else {
-          const allX = /^x+$/.test(val), hasBad = /[xz]/.test(val);
+          const allX = /^x+$/i.test(val), hasBad = /[xz]/i.test(val);
           const col = allX ? '#ef4444' : hasBad ? '#f59e0b' : '#3b82f6';
           g.strokeStyle = col; g.fillStyle = allX ? 'rgba(239,68,68,0.12)' : 'rgba(59,130,246,0.12)'; g.lineWidth = 1.2;
           const w = x2 - x1;
@@ -270,12 +352,13 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
     const drawCursor = (t: number | null, color: string, dashed: boolean) => {
       if (t === null) return;
       const x = Math.round(X(t)) + 0.5;
-      g.strokeStyle = color; g.lineWidth = 1; g.setLineDash(dashed ? [4, 3] : []);
+      g.strokeStyle = color; g.lineWidth = 1.2; g.setLineDash(dashed ? [4, 3] : []);
       g.beginPath(); g.moveTo(x, 0); g.lineTo(x, rowsHeight); g.stroke(); g.setLineDash([]);
     };
     drawCursor(hover, '#94a3b8', true);
-    drawCursor(pinned, '#facc15', false);
-  }, [wave, rows, view, width, radix, hover, pinned, cursorT, psTick, endT, rowsHeight]);
+    drawCursor(markerA, '#facc15', false);
+    drawCursor(markerB, '#f97316', false);
+  }, [wave, rows, view, width, radix, analogMode, hover, markerA, markerB, psTick, endT, rowsHeight]);
 
   const toggleSignal = (name: string) =>
     setSelected((cur) => (cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name]));
@@ -293,23 +376,60 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-700 bg-dark relative">
         <button className="px-3 py-1 rounded bg-green-600 hover:bg-green-500 text-white text-sm flex items-center gap-1 disabled:opacity-40"
           disabled={busy || !tbTop} onClick={onRun}>
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />} Simülasyonu Çalıştır
+          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+          {isTr ? 'Simülasyonu Çalıştır' : 'Run Simulation'}
         </button>
-        <span className="text-xs text-gray-400">{tbTop ? `tb: ${tbTop}` : 'Testbench seçilmedi'}</span>
+        <span className="text-xs text-gray-400">{tbTop ? `tb: ${tbTop}` : (isTr ? 'Testbench seçilmedi' : 'No testbench selected')}</span>
+
+        {deltaInfo && (
+          <div className="px-2.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-mono flex items-center gap-1.5">
+            <Ruler className="w-3.5 h-3.5" />
+            <span>Δt (A↔B) = {deltaInfo.dtStr}</span>
+            {deltaInfo.freqMhz && <span className="text-amber-400/80">({deltaInfo.freqMhz} MHz)</span>}
+            <button
+              type="button"
+              onClick={() => { setMarkerA(null); setMarkerB(null); }}
+              className="ml-1 hover:text-white"
+              title={isTr ? 'İmleçleri temizle' : 'Clear markers'}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <div className="ml-auto flex items-center gap-2">
-          <button className={btn} onClick={() => setView([0, endT * 1.02])} disabled={!wave} title="Sığdır"><Maximize2 className="w-3.5 h-3.5" />Fit</button>
-          <button className={btn} onClick={() => zoom(0.5)} disabled={!wave} title="Yakınlaştır"><ZoomIn className="w-3.5 h-3.5" /></button>
-          <button className={btn} onClick={() => zoom(2)} disabled={!wave} title="Uzaklaştır"><ZoomOut className="w-3.5 h-3.5" /></button>
+          <button
+            type="button"
+            onClick={() => setAnalogMode((v) => !v)}
+            disabled={!wave}
+            className={`px-2 py-1 rounded border text-xs flex items-center gap-1 transition ${
+              analogMode
+                ? 'bg-emerald-600/25 border-emerald-400 text-emerald-200'
+                : 'bg-surface hover:bg-slate-700 border-slate-700 text-slate-300'
+            }`}
+            title={isTr ? 'Çok-bitli veri hatlarını Analog (EKG/EEG Rampa) eğrisi olarak çiz' : 'Render multi-bit buses as Analog step waves'}
+          >
+            <Activity className="w-3.5 h-3.5 text-emerald-400" />
+            {isTr ? 'Analog Mod' : 'Analog'}
+          </button>
+          <button className={btn} onClick={() => setView([0, endT * 1.02])} disabled={!wave} title="Fit"><Maximize2 className="w-3.5 h-3.5" />Fit</button>
+          <button className={btn} onClick={() => zoom(0.5)} disabled={!wave} title="Zoom In"><ZoomIn className="w-3.5 h-3.5" /></button>
+          <button className={btn} onClick={() => zoom(2)} disabled={!wave} title="Zoom Out"><ZoomOut className="w-3.5 h-3.5" /></button>
           <select value={radix} onChange={(e) => setRadix(e.target.value as Radix)}
-            className="px-2 py-1 rounded bg-surface border border-slate-700 text-xs">
-            <option value="hex">HEX</option><option value="bin">BIN</option><option value="dec">DEC</option>
+            className="px-2 py-1 rounded bg-surface border border-slate-700 text-xs font-mono">
+            <option value="hex">HEX</option>
+            <option value="signed">SIGNED</option>
+            <option value="dec">UINT</option>
+            <option value="bin">BIN</option>
           </select>
-          <button className={btn} onClick={() => setPicker(!picker)} disabled={!wave}><ListPlus className="w-3.5 h-3.5" />Sinyaller</button>
+          <button className={btn} onClick={() => setPicker(!picker)} disabled={!wave}>
+            <ListPlus className="w-3.5 h-3.5" />{isTr ? 'Sinyaller' : 'Signals'}
+          </button>
         </div>
 
         {picker && wave && (
           <div className="absolute right-3 top-full z-20 w-96 max-h-96 flex flex-col rounded border border-slate-600 bg-dark shadow-xl">
-            <input autoFocus value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Sinyal ara…"
+            <input autoFocus value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={isTr ? 'Sinyal ara…' : 'Search signal…'}
               className="m-2 px-2 py-1 rounded bg-darker border border-slate-700 text-sm" />
             <div className="overflow-y-auto text-xs font-mono">
               {pickerList.map((s) => (
@@ -326,15 +446,15 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
 
       {!wave ? (
         <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-2">
-          <p>Henüz waveform yok.</p>
-          <p className="text-xs">{status || 'Simülasyonu çalıştırın; testbench\'te $dumpfile yazmanız gerekmez.'}</p>
+          <p>{isTr ? 'Henüz waveform yok.' : 'No waveform loaded yet.'}</p>
+          <p className="text-xs">{status || (isTr ? 'Simülasyonu çalıştırın; testbench\'te $dumpfile yazmanız gerekmez.' : 'Click Run Simulation; $dumpfile is injected automatically.')}</p>
         </div>
       ) : (
         <>
           <div className="flex border-b border-slate-700 flex-shrink-0">
-            <div style={{ width: NAME_W }} className="px-3 flex items-center text-[11px] uppercase text-gray-500 bg-dark flex-shrink-0"
-              >
-              İmleç: {cursorT !== null ? formatTime(cursorT, psTick) : '—'} {pinned !== null && '📌'}
+            <div style={{ width: NAME_W }} className="px-3 flex items-center gap-2 text-[11px] font-mono text-gray-400 bg-dark flex-shrink-0">
+              <span>A: {markerA !== null ? formatTime(markerA, psTick) : (cursorT !== null ? formatTime(cursorT, psTick) : '—')}</span>
+              {markerB !== null && <span className="text-orange-400">B: {formatTime(markerB, psTick)}</span>}
             </div>
             <div className="flex-1 overflow-hidden"><canvas ref={rulerCv} /></div>
           </div>
@@ -350,12 +470,16 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
                   </button>
                 </div>
               ))}
-              {rows.length === 0 && <div className="p-3 text-xs text-gray-500">"Sinyaller" ile ekleyin</div>}
+              {rows.length === 0 && <div className="p-3 text-xs text-gray-500">{isTr ? '"Sinyaller" ile ekleyin' : 'Add via "Signals"'}</div>}
             </div>
             <div ref={wrapRef} className="flex-1 min-w-0 overflow-hidden">
               <canvas
                 ref={waveCv}
                 className="cursor-crosshair block"
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMarkerB(timeAt(e.clientX));
+                }}
                 onMouseMove={(e) => {
                   const d = drag.current;
                   if (d) {
@@ -367,9 +491,20 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
                     setHover(timeAt(e.clientX));
                   }
                 }}
-                onMouseDown={(e) => { drag.current = { x: e.clientX, t0: view[0], t1: view[1], moved: false }; }}
+                onMouseDown={(e) => {
+                  if (e.button === 0) {
+                    drag.current = { x: e.clientX, t0: view[0], t1: view[1], moved: false };
+                  }
+                }}
                 onMouseUp={(e) => {
-                  if (drag.current && !drag.current.moved) setPinned((p) => (p === null ? timeAt(e.clientX) : null));
+                  if (drag.current && !drag.current.moved) {
+                    const t = timeAt(e.clientX);
+                    if (e.shiftKey) {
+                      setMarkerB(t);
+                    } else {
+                      setMarkerA((p) => (p === null ? t : t));
+                    }
+                  }
                   drag.current = null;
                 }}
                 onMouseLeave={() => { drag.current = null; setHover(null); }}
@@ -378,9 +513,13 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
             </div>
           </div>
           <div className="px-3 py-1 text-[11px] text-gray-500 border-t border-slate-700 bg-dark">
-            {wave.timescale && `timescale ${wave.timescale} · `}süre {formatTime(wave.end_time, psTick)} · {wave.signals.length} sinyal
-            {wave.truncated && <span className="text-yellow-400"> · Bazı sinyaller kısaltıldı</span>}
-            {' · '}tekerlek: zoom · Shift+tekerlek/sürükle: kaydır · tık: imleci sabitle · çift tık: sığdır
+            {wave.timescale && `timescale ${wave.timescale} · `}
+            {isTr ? 'süre' : 'duration'} {formatTime(wave.end_time, psTick)} · {wave.signals.length} {isTr ? 'sinyal' : 'signals'}
+            {wave.truncated && <span className="text-yellow-400"> · {isTr ? 'Bazı sinyaller kısaltıldı' : 'Truncated'}</span>}
+            {' · '}
+            {isTr
+              ? 'Sol Tık: İmleç A · Shift+Tık / Sağ Tık: İmleç B (Δt ölçümü) · Analog Mod: EKG/EEG eğrisi'
+              : 'Left Click: Marker A · Shift+Click / Right Click: Marker B (Δt) · Analog Mode: step wave'}
           </div>
         </>
       )}

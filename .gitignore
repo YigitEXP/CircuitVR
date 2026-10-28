@@ -54,3 +54,6 @@ uploads/*
 # Environment
 .env
 .env.local
+
+.vercel
+.env*

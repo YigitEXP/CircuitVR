@@ -1,16 +1,6 @@
-"""Convert a Yosys JSON netlist into a schematic graph (nodes, pins, nets).
-
-Output format (consumed by the frontend schematic viewer):
-{
-  "module": str,
-  "modules": [str],                 # all modules in the netlist
-  "nodes": [{id, kind, type, label, params, ports: [{id, name, dir, width}]}],
-  "edges": [{id, net, width, source, sourcePort, target, targetPort}],
-  "stats": {cells, nets, ports, by_type: {type: count}}
-}
-"""
+"""Convert a Yosys JSON netlist into a schematic graph (nodes, pins, nets) + Critical Path / Timing Estimator."""
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Friendly names for Yosys internal cells
 _CELL_LABELS = {
@@ -29,7 +19,7 @@ _SEQUENTIAL_PREFIXES = ("$dff", "$adff", "$sdff", "$dlatch", "$mem", "$aldff", "
 
 
 def _is_const(bit: Any) -> bool:
-    return isinstance(bit, str)  # "0", "1", "x", "z"
+    return isinstance(bit, str)
 
 
 def _cell_kind(ctype: str) -> str:
@@ -39,7 +29,94 @@ def _cell_kind(ctype: str) -> str:
         return "mux"
     if ctype.startswith("$"):
         return "comb"
-    return "instance"  # user module instantiation
+    return "instance"
+
+
+def _cell_delay_ns(node: Dict[str, Any]) -> float:
+    kind = node.get("kind", "")
+    if kind in ("port_in", "port_out", "sequential"):
+        return 0.0
+    ctype = node.get("type", "")
+    if ctype in ("$mul", "$div", "$mod"):
+        return 2.2
+    if ctype in ("$add", "$sub", "$lt", "$le", "$gt", "$ge"):
+        return 0.9
+    if ctype in ("$mux", "$pmux"):
+        return 0.55
+    if kind == "instance":
+        return 1.2
+    return 0.45
+
+
+def _compute_critical_path(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> Dict[str, Any]:
+    node_map = {n["id"]: n for n in nodes}
+    adj: Dict[str, List[Tuple[str, str]]] = defaultdict(list)
+    for e in edges:
+        src, dst, eid = e["source"], e["target"], e["id"]
+        # Do not traverse through sequential flip-flop boundaries (they break combinational paths)
+        if node_map.get(src, {}).get("kind") == "sequential" and dst == src:
+            continue
+        adj[src].append((dst, eid))
+
+    memo: Dict[str, Tuple[float, List[str], List[str]]] = {}
+    visiting: Set[str] = set()
+
+    def dfs(u: str, is_start: bool = False) -> Tuple[float, List[str], List[str]]:
+        u_node = node_map.get(u, {})
+        u_kind = u_node.get("kind", "")
+        if not is_start and u_kind in ("sequential", "port_out"):
+            return (0.0, [u], [])
+        if u in memo and not is_start:
+            return memo[u]
+        if u in visiting:
+            return (0.0, [u], [])
+
+        visiting.add(u)
+        self_d = _cell_delay_ns(u_node)
+        best_d = 0.0
+        best_nodes: List[str] = []
+        best_edges: List[str] = []
+
+        for v, eid in adj.get(u, []):
+            sub_d, sub_n, sub_e = dfs(v, False)
+            cand_d = sub_d + 0.12  # interconnect routing delay
+            if cand_d > best_d or (cand_d == best_d and len(sub_n) > len(best_nodes)):
+                best_d = cand_d
+                best_nodes = sub_n
+                best_edges = [eid] + sub_e
+
+        visiting.remove(u)
+        res = (self_d + best_d, [u] + best_nodes, best_edges)
+        if not is_start:
+            memo[u] = res
+        return res
+
+    best_total = 0.0
+    crit_nodes: List[str] = []
+    crit_edges: List[str] = []
+
+    start_candidates = [n["id"] for n in nodes if n["kind"] in ("port_in", "sequential")]
+    if not start_candidates:
+        start_candidates = [n["id"] for n in nodes]
+
+    for s in start_candidates:
+        d, ns, es = dfs(s, True)
+        if d > best_total or (d == best_total and len(ns) > len(crit_nodes)):
+            best_total = d
+            crit_nodes = ns
+            crit_edges = es
+
+    comb_depth = sum(1 for nid in crit_nodes if node_map.get(nid, {}).get("kind") in ("comb", "mux", "instance"))
+    total_delay_ns = round(max(0.65, best_total + 0.35), 2)  # +0.35ns FF clk-to-q + setup
+    fmax_mhz = round(min(650.0, 1000.0 / total_delay_ns), 1)
+
+    return {
+        "depth": comb_depth,
+        "delay_ns": total_delay_ns,
+        "fmax_mhz": fmax_mhz,
+        "nodes": crit_nodes,
+        "edges": crit_edges,
+    }
 
 
 def list_modules(netlist: Dict[str, Any]) -> List[str]:
@@ -55,7 +132,6 @@ def pick_top(netlist: Dict[str, Any], top: Optional[str] = None) -> str:
     for name, mod in modules.items():
         if mod.get("attributes", {}).get("top") in (1, "1", "00000000000000000000000000000001"):
             return name
-    # fall back: module never instantiated by another module
     instantiated = {c["type"] for m in modules.values() for c in m.get("cells", {}).values()}
     for name in modules:
         if name not in instantiated:
@@ -67,7 +143,6 @@ def build_schematic(netlist: Dict[str, Any], top: Optional[str] = None) -> Dict[
     top_name = pick_top(netlist, top)
     mod = netlist["modules"][top_name]
 
-    # Readable net names (prefer non-hidden)
     bit_name: Dict[int, str] = {}
     for nname, ninfo in sorted(mod.get("netnames", {}).items(),
                                key=lambda kv: kv[1].get("hide_name", 0), reverse=True):
@@ -78,13 +153,11 @@ def build_schematic(netlist: Dict[str, Any], top: Optional[str] = None) -> Dict[
             bit_name[b] = nname if width == 1 else f"{nname}[{i}]"
 
     nodes: List[Dict[str, Any]] = []
-    # bit -> list of (node_id, port_name) for drivers / sinks
     drivers: Dict[int, List[Tuple[str, str]]] = defaultdict(list)
     sinks: Dict[int, List[Tuple[str, str]]] = defaultdict(list)
     port_bits: Dict[Tuple[str, str], List[Any]] = {}
     by_type: Dict[str, int] = defaultdict(int)
 
-    # Top-level ports become terminal nodes
     for pname, pinfo in mod.get("ports", {}).items():
         direction = pinfo.get("direction", "input")
         bits = pinfo.get("bits", [])
@@ -107,7 +180,6 @@ def build_schematic(netlist: Dict[str, Any], top: Optional[str] = None) -> Dict[
             if direction == "inout":
                 drivers[b].append((nid, pname))
 
-    # Cells
     for cname, cell in mod.get("cells", {}).items():
         ctype = cell.get("type", "?")
         nid = f"cell:{cname}"
@@ -115,7 +187,7 @@ def build_schematic(netlist: Dict[str, Any], top: Optional[str] = None) -> Dict[
         ports = []
         for pname, bits in cell.get("connections", {}).items():
             d = pdirs.get(pname)
-            if d is None:  # heuristic when directions are missing
+            if d is None:
                 d = "output" if pname in ("Y", "Q", "O", "OUT") else "input"
             ports.append({"id": f"{nid}.{pname}", "name": pname, "dir": d, "width": len(bits)})
             port_bits[(nid, pname)] = bits
@@ -123,7 +195,6 @@ def build_schematic(netlist: Dict[str, Any], top: Optional[str] = None) -> Dict[
                 if _is_const(b):
                     continue
                 (drivers if d == "output" else sinks)[b].append((nid, pname))
-        # Inputs first, outputs last for nicer layout
         ports.sort(key=lambda p: (p["dir"] == "output", p["name"]))
         label = _CELL_LABELS.get(ctype, ctype.lstrip("$"))
         by_type[label] += 1
@@ -133,7 +204,6 @@ def build_schematic(netlist: Dict[str, Any], top: Optional[str] = None) -> Dict[
             "typeLabel": label, "params": cell.get("parameters", {}), "ports": ports,
         })
 
-    # Edges: group bits by (driver pin, sink pin) so buses render as one wire
     groups: Dict[Tuple[str, str, str, str], List[int]] = defaultdict(list)
     for bit, drv_list in drivers.items():
         for (dn, dp) in drv_list:
@@ -152,6 +222,8 @@ def build_schematic(netlist: Dict[str, Any], top: Optional[str] = None) -> Dict[
             "target": sn, "targetPort": f"{sn}.{sp}",
         })
 
+    critical_path = _compute_critical_path(nodes, edges)
+
     return {
         "module": top_name,
         "modules": list_modules(netlist),
@@ -163,4 +235,5 @@ def build_schematic(netlist: Dict[str, Any], top: Optional[str] = None) -> Dict[
             "ports": len(mod.get("ports", {})),
             "by_type": dict(by_type),
         },
+        "critical_path": critical_path,
     }

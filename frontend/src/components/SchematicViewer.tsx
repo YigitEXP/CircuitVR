@@ -14,7 +14,9 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
+import { Zap } from 'lucide-react';
 import { SchematicGraph, SchematicNode } from '../types';
+import { useI18n } from '../i18n';
 
 const NODE_W = 170;
 const HEADER_H = 26;
@@ -39,9 +41,11 @@ function nodeSize(n: SchematicNode) {
 }
 
 /* ---------- Custom node ---------- */
-const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean }>> = ({ data }) => {
+const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean; critical?: boolean }>> = ({ data }) => {
   const n = data.node;
   const colors = KIND_COLORS[n.kind] ?? KIND_COLORS.comb;
+  const borderCol = data.critical ? '#f43f5e' : colors.border;
+  const boxShadow = data.critical ? '0 0 14px rgba(244,63,94,0.65)' : undefined;
   const isTerminal = n.kind === 'port_in' || n.kind === 'port_out';
   const ins = n.ports.filter((p) => p.dir !== 'output');
   const outs = n.ports.filter((p) => p.dir === 'output');
@@ -53,8 +57,9 @@ const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean }>> = ({ 
     return (
       <div
         style={{
-          width: size.w, height: size.h, border: `2px solid ${colors.border}`,
-          background: colors.header, opacity: data.dim ? 0.3 : 1,
+          width: size.w, height: size.h, border: `2px solid ${borderCol}`,
+          background: colors.header, opacity: data.dim ? 0.25 : 1,
+          boxShadow,
           clipPath: isIn
             ? 'polygon(0 0, 85% 0, 100% 50%, 85% 100%, 0 100%)'
             : 'polygon(15% 0, 100% 0, 100% 100%, 15% 100%, 0 50%)',
@@ -67,7 +72,7 @@ const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean }>> = ({ 
           type={isIn ? 'source' : 'target'}
           id={p.id}
           position={isIn ? Position.Right : Position.Left}
-          style={{ background: colors.border }}
+          style={{ background: borderCol }}
         />
       </div>
     );
@@ -76,14 +81,15 @@ const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean }>> = ({ 
   return (
     <div
       style={{
-        width: size.w, height: size.h, border: `2px solid ${colors.border}`,
-        borderRadius: 6, background: '#0f172a', opacity: data.dim ? 0.3 : 1,
+        width: size.w, height: size.h, border: `2px solid ${borderCol}`,
+        borderRadius: 6, background: '#0f172a', opacity: data.dim ? 0.25 : 1,
+        boxShadow,
       }}
       className="text-white shadow-lg"
       title={`${n.type}\n${Object.entries(n.params).map(([k, v]) => `${k}=${v}`).join('\n')}`}
     >
       <div
-        style={{ height: HEADER_H, background: colors.header }}
+        style={{ height: HEADER_H, background: data.critical ? '#881337' : colors.header }}
         className="px-2 flex items-center justify-between text-xs font-semibold rounded-t-sm"
       >
         <span className="truncate">{n.typeLabel ?? n.label}</span>
@@ -93,7 +99,7 @@ const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean }>> = ({ 
         <React.Fragment key={p.id}>
           <Handle
             type="target" id={p.id} position={Position.Left}
-            style={{ top: HEADER_H + i * ROW_H + ROW_H / 2, background: colors.border }}
+            style={{ top: HEADER_H + i * ROW_H + ROW_H / 2, background: borderCol }}
           />
           <div
             style={{ position: 'absolute', left: 8, top: HEADER_H + i * ROW_H, height: ROW_H }}
@@ -107,7 +113,7 @@ const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean }>> = ({ 
         <React.Fragment key={p.id}>
           <Handle
             type="source" id={p.id} position={Position.Right}
-            style={{ top: HEADER_H + i * ROW_H + ROW_H / 2, background: colors.border }}
+            style={{ top: HEADER_H + i * ROW_H + ROW_H / 2, background: borderCol }}
           />
           <div
             style={{ position: 'absolute', right: 8, top: HEADER_H + i * ROW_H, height: ROW_H }}
@@ -154,16 +160,25 @@ interface Props {
 }
 
 const Inner: React.FC<Props> = ({ graph }) => {
+  const { lang } = useI18n();
+  const isTr = lang === 'tr';
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNet, setSelectedNet] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [showCritical, setShowCritical] = useState(false);
   const [query, setQuery] = useState('');
   const [layouting, setLayouting] = useState(false);
+
+  const critNodeSet = useMemo(() => new Set(graph.critical_path?.nodes ?? []), [graph]);
+  const critEdgeSet = useMemo(() => new Set(graph.critical_path?.edges ?? []), [graph]);
 
   // Compute layout when graph changes
   useEffect(() => {
     let cancelled = false;
     setLayouting(true);
+    setSelectedNet(null);
+    setSelectedNodeId(null);
     layoutGraph(graph).then((pos) => {
       if (cancelled) return;
       setNodes(
@@ -171,7 +186,7 @@ const Inner: React.FC<Props> = ({ graph }) => {
           id: n.id,
           type: 'cell',
           position: pos.get(n.id) ?? { x: 0, y: 0 },
-          data: { node: n, dim: false },
+          data: { node: n, dim: false, critical: false },
         })) as Node[]
       );
       setEdges(
@@ -194,19 +209,38 @@ const Inner: React.FC<Props> = ({ graph }) => {
     return () => { cancelled = true; };
   }, [graph, setNodes, setEdges]);
 
-  // Net highlight + search dimming
+  // Compute Fan-In / Fan-Out cone for selectedNodeId
+  const coneInfo = useMemo(() => {
+    if (!selectedNodeId) return null;
+    const coneNodes = new Set<string>([selectedNodeId]);
+    const coneEdges = new Set<string>();
+    graph.edges.forEach((e) => {
+      if (e.source === selectedNodeId || e.target === selectedNodeId) {
+        coneNodes.add(e.source);
+        coneNodes.add(e.target);
+        coneEdges.add(e.id);
+      }
+    });
+    return { coneNodes, coneEdges };
+  }, [selectedNodeId, graph.edges]);
+
+  // Net / Critical Path / Cone highlight + search dimming
   useEffect(() => {
     const q = query.trim().toLowerCase();
     setEdges((eds) =>
       eds.map((e) => {
-        const active = selectedNet !== null && e.data?.net === selectedNet;
+        const isCrit = showCritical && critEdgeSet.has(e.id);
+        const isCone = coneInfo ? coneInfo.coneEdges.has(e.id) : false;
+        const isNet = selectedNet !== null && e.data?.net === selectedNet;
+        const active = isCrit || isCone || isNet;
+        const anyFilter = showCritical || !!coneInfo || selectedNet !== null;
         return {
           ...e,
           animated: active,
           style: {
             ...e.style,
-            stroke: active ? '#facc15' : selectedNet ? '#334155' : '#64748b',
-            strokeWidth: (e.data?.width > 1 ? 3 : 1.5) + (active ? 1 : 0),
+            stroke: isCrit ? '#f43f5e' : isCone ? '#38bdf8' : isNet ? '#facc15' : anyFilter ? '#1e293b' : '#64748b',
+            strokeWidth: (e.data?.width > 1 ? 3 : 1.5) + (active ? 1.2 : 0),
           },
         };
       })
@@ -214,14 +248,23 @@ const Inner: React.FC<Props> = ({ graph }) => {
     setNodes((nds) =>
       nds.map((n) => {
         const sn = n.data.node as SchematicNode;
-        const match = !q || sn.label.toLowerCase().includes(q) || sn.type.toLowerCase().includes(q);
-        return n.data.dim === !match ? n : { ...n, data: { ...n.data, dim: !match } };
+        const matchQ = !q || sn.label.toLowerCase().includes(q) || sn.type.toLowerCase().includes(q);
+        const isCrit = showCritical && critNodeSet.has(n.id);
+        const isCone = coneInfo ? coneInfo.coneNodes.has(n.id) : true;
+        const dim = !matchQ || (showCritical && !isCrit) || (coneInfo !== null && !isCone);
+        return { ...n, data: { ...n.data, dim, critical: isCrit } };
       })
     );
-  }, [selectedNet, query, setEdges, setNodes]);
+  }, [selectedNet, selectedNodeId, showCritical, query, critEdgeSet, critNodeSet, coneInfo, setEdges, setNodes]);
 
   const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
+    setSelectedNodeId(null);
     setSelectedNet((cur) => (cur === edge.data?.net ? null : edge.data?.net));
+  }, []);
+
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    setSelectedNet(null);
+    setSelectedNodeId((cur) => (cur === node.id ? null : node.id));
   }, []);
 
   const typeSummary = useMemo(
@@ -229,22 +272,56 @@ const Inner: React.FC<Props> = ({ graph }) => {
     [graph]
   );
 
+  const cp = graph.critical_path;
+
   return (
     <div className="space-y-3">
       <div className="card flex flex-wrap items-center gap-3 text-sm">
         <span className="font-semibold">{graph.module}</span>
-        <span className="text-gray-400">
-          {graph.stats.cells} cells · {graph.stats.nets} nets · {graph.stats.ports} ports
+        <span className="text-gray-400 text-xs">
+          {graph.stats.cells} {isTr ? 'hücre' : 'cells'} · {graph.stats.nets} {isTr ? 'hat' : 'nets'} · {graph.stats.ports} port
         </span>
+
+        {cp && (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedNet(null);
+              setSelectedNodeId(null);
+              setShowCritical((v) => !v);
+            }}
+            className={`px-2.5 py-1 rounded-lg border text-xs font-mono flex items-center gap-1.5 transition ${
+              showCritical
+                ? 'bg-rose-600/30 border-rose-400 text-rose-200 shadow-glow'
+                : 'bg-darker border-slate-700 text-slate-300 hover:border-rose-500/50 hover:text-rose-300'
+            }`}
+            title={
+              isTr
+                ? 'En uzun kombinasyonel kritik yolu ve tahmini maksimum çalışma frekansını (Fmax) vurgula'
+                : 'Highlight longest combinational critical path and estimated Fmax'
+            }
+          >
+            <Zap className="w-3.5 h-3.5 text-rose-400" />
+            <span>
+              {isTr ? 'Kritik Yol:' : 'Critical Path:'} {cp.depth} {isTr ? 'kademe' : 'stages'} ({cp.delay_ns} ns · Fmax ≈ {cp.fmax_mhz} MHz)
+            </span>
+          </button>
+        )}
+
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search cell / type…"
-          className="ml-auto px-2 py-1 rounded bg-darker border border-gray-700 text-sm"
+          placeholder={isTr ? 'Hücre / kapı ara…' : 'Search cell / type…'}
+          className="ml-auto px-2 py-1 rounded bg-darker border border-gray-700 text-xs"
         />
         {selectedNet && (
           <button className="px-2 py-1 rounded bg-yellow-600 text-xs" onClick={() => setSelectedNet(null)}>
             Net: {selectedNet} ✕
+          </button>
+        )}
+        {selectedNodeId && (
+          <button className="px-2 py-1 rounded bg-sky-600 text-xs" onClick={() => setSelectedNodeId(null)}>
+            Fan-In/Out: {selectedNodeId.replace(/^(cell:|port:)/, '')} ✕
           </button>
         )}
       </div>
@@ -252,7 +329,7 @@ const Inner: React.FC<Props> = ({ graph }) => {
       <div className="card relative" style={{ height: 640, padding: 0 }}>
         {layouting && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 text-sm">
-            Laying out schematic…
+            {isTr ? 'Şematik yerleştiriliyor…' : 'Laying out schematic…'}
           </div>
         )}
         <ReactFlow
@@ -261,7 +338,11 @@ const Inner: React.FC<Props> = ({ graph }) => {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onEdgeClick={onEdgeClick}
-          onPaneClick={() => setSelectedNet(null)}
+          onNodeClick={onNodeClick}
+          onPaneClick={() => {
+            setSelectedNet(null);
+            setSelectedNodeId(null);
+          }}
           nodeTypes={nodeTypes}
           nodesConnectable={false}
           minZoom={0.05}
@@ -290,7 +371,11 @@ const Inner: React.FC<Props> = ({ graph }) => {
               <span style={{ background: c.border }} className="inline-block w-3 h-3 rounded-sm" />{k}
             </span>
           ))}
-          <span>Tıkla: kabloya tıklayınca net vurgulanır · sürükle/zoom serbest</span>
+          <span>
+            {isTr
+              ? 'Kabloya tıkla: sinyali izle · Hücreye tıkla: Fan-In/Fan-Out konisini gör · Kritik Yol butonu: Fmax darboğazını parlat'
+              : 'Click wire: trace net · Click cell: highlight Fan-In/Out cone · Critical Path button: highlight Fmax bottleneck'}
+          </span>
         </div>
       </div>
     </div>

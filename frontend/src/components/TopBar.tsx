@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useRef } from 'react';
-import { CircuitBoard, FolderOpen, Play, ShieldCheck, Workflow, RefreshCw, FilePlus2, FolderUp, Wrench, Terminal } from 'lucide-react';
+import { CircuitBoard, FolderOpen, Play, ShieldCheck, Workflow, RefreshCw, FilePlus2, FolderUp, Wrench, Terminal, Search } from 'lucide-react';
 import { ToolStatus, WorkspaceInfo } from '../types';
 import { UploadItem } from '../services/api';
 import { collectFromInput } from '../utils/collectFiles';
@@ -25,6 +25,7 @@ interface Props {
   onAddFiles: (items: UploadItem[]) => void;
   onShowTools: () => void;
   onShowDev: () => void;
+  onOpenPalette?: () => void;
 }
 
 /** Hover'da açılan koyu tooltip. */
@@ -126,6 +127,18 @@ export default function TopBar(p: Props) {
 
       <div className="ml-auto flex items-center gap-3 text-xs">
         {p.busy && <span className="text-yellow-300 animate-pulse">{tr.running}: {p.busy}…</span>}
+        {p.onOpenPalette && (
+          <Tip text="Hızlı Komut Paleti & Dosya Arama (Ctrl+K)" align="right">
+            <button
+              onClick={p.onOpenPalette}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-darker/90 border border-slate-700 hover:border-indigo-500/60 text-slate-300 hover:text-white transition"
+            >
+              <Search className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden xl:inline text-[11px]">Komutlar</span>
+              <span className="text-[10px] font-mono px-1 rounded bg-slate-800 text-slate-400">Ctrl+K</span>
+            </button>
+          </Tip>
+        )}
         <label className="flex items-center gap-1 text-slate-400" title="Kaydedince / dosya değişince lint otomatik çalışır">
           <input type="checkbox" checked={p.autoLint} onChange={(e) => p.onAutoLint(e.target.checked)} /> {tr.autoLint}
         </label>

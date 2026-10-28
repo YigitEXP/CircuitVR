@@ -1,5 +1,5 @@
 import {
-  AutoFixResponse, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, FsmMachine, FsmReport, InspectedRtlInfo, LintResult, OptimizationReport, OptimizationSuggestion, ParetoCandidate, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
+  AutoFixResponse, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, FsmMachine, FsmReport, ImportedModelResult, InspectedRtlInfo, LintResult, OptimizationReport, OptimizationSuggestion, ParetoCandidate, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
 } from '../types';
 import { UploadItem } from './api';
 
@@ -520,7 +520,16 @@ export const cloudFallback = {
     };
   },
   edgeAiAnalyze(cfg: EdgeAiConfig): EdgeAiAnalysis {
-    const weights = cfg.weights.length ? cfg.weights : [-0.125, -0.25, 0.375, 0.875, 0.375, -0.25, -0.125];
+    const rawWeights = cfg.weights.length ? cfg.weights : [-0.125, -0.25, 0.375, 0.875, 0.375, -0.25, -0.125];
+    const bnEnabled = !!cfg.bn_enabled;
+    const bnGamma = cfg.bn_gamma ?? 1.0;
+    const bnBeta = cfg.bn_beta ?? 0.0;
+    const bnMean = cfg.bn_mean ?? 0.0;
+    const bnVar = Math.max(1e-8, cfg.bn_var ?? 1.0);
+    const bnEps = Math.max(1e-9, cfg.bn_eps ?? 1e-5);
+    const bnScale = bnEnabled ? bnGamma / Math.sqrt(bnVar + bnEps) : 1.0;
+    const weights = bnEnabled ? rawWeights.map((w) => Number((w * bnScale).toFixed(6))) : rawWeights;
+    const foldedBias = bnEnabled ? Number((((cfg.bias || 0) - bnMean) * bnScale + bnBeta).toFixed(6)) : (cfg.bias || 0);
     const intBits = Math.max(1, Math.min(16, cfg.int_bits || 2));
     const fracBits = Math.max(1, Math.min(24, cfg.frac_bits || 6));
     const totalBits = intBits + fracBits;
@@ -564,7 +573,7 @@ export const cloudFallback = {
       };
     });
 
-    const bQ = qVal(cfg.bias || 0);
+    const bQ = qVal(foldedBias);
     const tQ = qVal(cfg.threshold || 0.45);
     const kLen = weights.length;
     const guardBits = Math.max(1, Math.ceil(Math.log2(Math.max(kLen + 1, 2))));
@@ -604,7 +613,7 @@ export const cloudFallback = {
     for (let i = 0; i < 64; i++) {
       winFp.pop(); winFp.unshift(sigFloat[i]);
       winFx.pop(); winFx.unshift(sigQInt[i]);
-      const accF = winFp.reduce((a, x, j) => a + x * weights[j], cfg.bias || 0);
+      const accF = winFp.reduce((a, x, j) => a + x * weights[j], foldedBias);
       const yf = cfg.activation === 'relu' ? Math.max(0, accF) : cfg.activation === 'leaky_relu' ? (accF >= 0 ? accF : accF * 0.125) : accF;
       outFp.push(Number(yf.toFixed(5)));
 
@@ -670,6 +679,13 @@ export const cloudFallback = {
       threshold_int: tQ.qi,
       threshold_float: Number(tQ.qf.toFixed(6)),
       pareto_front,
+      bn_enabled: bnEnabled,
+      bn_scale: Number(bnScale.toFixed(6)),
+      folded_weights: weights,
+      folded_bias: foldedBias,
+      mem_content: `// CircuitVR FPGA Weight ROM ($readmemh) — Q${intBits}.${fracBits}\n` + weightsTable.map((w) => w.hex.replace(/^0x/i, '')).join('\n') + '\n',
+      coe_content: `; CircuitVR Xilinx Vivado COE — Q${intBits}.${fracBits}\nmemory_initialization_radix=16;\nmemory_initialization_vector=\n` + weightsTable.map((w) => w.hex.replace(/^0x/i, '')).join(',\n') + ';\n',
+      python_export_script: `#!/usr/bin/env python3\nimport json, math\n# CircuitVR Python -> FPGA Exporter\n`,
       bit_growth: {
         input_q: `Q${intBits}.${fracBits} (${totalBits}-bit)`,
         weight_q: `Q${intBits}.${fracBits} (${totalBits}-bit)`,
@@ -706,6 +722,56 @@ export const cloudFallback = {
         anomaly_indices: anomalies,
       },
     };
+  },
+  async edgeAiImportModel(file: File): Promise<ImportedModelResult> {
+    const fname = file.name.toLowerCase();
+    if (fname.endsWith('.npy')) {
+      const buf = await file.arrayBuffer();
+      const dv = new DataView(buf);
+      const major = dv.getUint8(6);
+      const hdrLen = major === 1 ? dv.getUint16(8, true) : dv.getUint32(8, true);
+      const offset = (major === 1 ? 10 : 12) + hdrLen;
+      const hdrTxt = new TextDecoder('latin1').decode(buf.slice(major === 1 ? 10 : 12, offset));
+      const isF8 = hdrTxt.includes('<f8');
+      const step = isF8 ? 8 : 4;
+      const cnt = Math.floor((buf.byteLength - offset) / step);
+      const vals: number[] = [];
+      for (let i = 0; i < cnt; i++) {
+        vals.push(Number((isF8 ? dv.getFloat64(offset + i * 8, true) : dv.getFloat32(offset + i * 4, true)).toFixed(6)));
+      }
+      return vals.length <= 16
+        ? { filename: file.name, format: 'NumPy (.npy)', weights: vals }
+        : { filename: file.name, format: 'NumPy Signal (.npy)', signal: vals.slice(0, 256) };
+    }
+    const text = await file.text();
+    if (fname.endsWith('.json')) {
+      const j = JSON.parse(text);
+      if (Array.isArray(j)) {
+        const nums = j.map(Number).filter((n) => !Number.isNaN(n));
+        return nums.length <= 16
+          ? { filename: file.name, format: 'JSON Array', weights: nums }
+          : { filename: file.name, format: 'JSON Signal', signal: nums.slice(0, 256) };
+      }
+      return {
+        filename: file.name,
+        format: 'JSON Model',
+        weights: Array.isArray(j.weights) ? j.weights.map(Number).slice(0, 16) : undefined,
+        bias: typeof j.bias === 'number' ? j.bias : undefined,
+        signal: Array.isArray(j.signal || j.samples) ? (j.signal || j.samples).map(Number).slice(0, 256) : undefined,
+        bn_gamma: typeof j.bn_gamma === 'number' ? j.bn_gamma : undefined,
+        bn_beta: typeof j.bn_beta === 'number' ? j.bn_beta : undefined,
+        bn_mean: typeof j.bn_mean === 'number' ? j.bn_mean : undefined,
+        bn_var: typeof j.bn_var === 'number' ? j.bn_var : undefined,
+      };
+    }
+    const nums = text
+      .replace(/[\[\]]/g, '')
+      .split(/[\s,;]+/)
+      .map((s) => Number(s.trim()))
+      .filter((n) => !Number.isNaN(n));
+    return nums.length <= 16
+      ? { filename: file.name, format: 'CSV/Text Weights', weights: nums }
+      : { filename: file.name, format: 'CSV/Text Signal', signal: nums.slice(0, 256) };
   },
   edgeAiInspectRtl(path: string, file: string): InspectedRtlInfo {
     const text = this.readFile(path, file);

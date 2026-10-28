@@ -171,7 +171,15 @@ export interface EdgeAiConfig {
   bias: number;
   int_bits: number;
   frac_bits: number;
-  rounding: 'round' | 'trunc';
+  rounding: 'round' | 'rne' | 'trunc';
+  overflow_mode?: 'saturate' | 'wrap';
+  arch_mode?: 'parallel' | 'serial_folded' | 'bram_rom';
+  bn_enabled?: boolean;
+  bn_gamma?: number;
+  bn_beta?: number;
+  bn_mean?: number;
+  bn_var?: number;
+  bn_eps?: number;
   stimulus: 'ecg' | 'eeg' | 'sine_noise' | 'custom';
   custom_signal?: number[];
   activation: 'relu' | 'leaky_relu' | 'sigmoid_lut' | 'none';
@@ -248,6 +256,13 @@ export interface EdgeAiAnalysis {
   threshold_int: number;
   threshold_float: number;
   pareto_front?: ParetoCandidate[];
+  bn_enabled?: boolean;
+  bn_scale?: number;
+  folded_weights?: number[];
+  folded_bias?: number;
+  mem_content?: string;
+  coe_content?: string;
+  python_export_script?: string;
   bit_growth: {
     input_q: string;
     weight_q: string;
@@ -283,6 +298,18 @@ export interface EdgeAiAnalysis {
     output_fx_int: number[];
     anomaly_indices: number[];
   };
+}
+
+export interface ImportedModelResult {
+  filename: string;
+  format: string;
+  weights?: number[];
+  bias?: number;
+  signal?: number[];
+  bn_gamma?: number;
+  bn_beta?: number;
+  bn_mean?: number;
+  bn_var?: number;
 }
 
 export interface EdgeAiGenerated {

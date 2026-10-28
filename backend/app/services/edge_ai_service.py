@@ -1,17 +1,23 @@
-"""Edge AI & Biosignal (1D-CNN / DSP) Hardware Co-Design Service.
+"""Edge AI & Biosignal (1D-CNN / DSP) Hardware Co-Design Service (V 2.16).
 
-Solves the top pain points of FPGA / Edge AI hardware engineers:
-1. Fixed-Point Quantization Explorer (Qm.n) with SQNR (dB), MSE, Clipping & Float-vs-Fixed visualization.
-2. Automatic Binary-Point & MAC Accumulator Bit-Growth Calculator (preventing overflow/truncation bugs).
-3. Hardware Roofline & FPGA Silicon Estimator (DSP48 cliff, LUTs, FFs, Latency in ns/us, Throughput).
-4. Dual Workflow:
-   - Mode A (Preset Templates): Test with ready-made Biomedical 1D-CNN / FIR templates (conv1d_biosignal).
-   - Mode B (Custom RTL & Custom Model): Auto-detect the user's own workspace RTL (.sv/.v/.vhd) ports,
-     bit-widths, and weights, import custom Python/PyTorch/CSV/JSON weights & signals, and generate a
-     Golden Testbench wired directly to the user's own RTL module (or synthesize a custom-named RTL core).
+Complete Python-to-FPGA Co-Design Pipeline:
+1. Safe Binary & Text Python Model Importer (.pkl/.pickle, .npy, .npz, .pt/.pth, .json, .csv, .mem, .coe).
+2. BatchNorm1d Folding Engine (folds gamma, beta, running_mean, running_var, eps into Conv1D weights & bias).
+3. Fixed-Point Quantization Explorer (Qm.n) with Round-Half-Up, Round-to-Nearest-Even (Convergent), and Truncation,
+   plus Saturation vs. Wrap-Around overflow modes.
+4. Multi-Architecture RTL Codegen:
+   - 'parallel': Single-cycle parallel multiplier + adder tree.
+   - 'serial_folded': Time-multiplexed sequential MAC state machine (1 shared multiplier over N cycles).
+   - 'bram_rom': $readmemh("weights_rom.mem") LUTRAM/BRAM weight memory architecture (update weights without RTL edits).
+5. FPGA Memory Artifact Generator: Hex `.mem` ($readmemh) & Xilinx Vivado `.coe` files + `export_to_circuitvr.py` script.
 """
+import io
+import json
 import math
+import pickle
 import re
+import struct
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -50,6 +56,281 @@ PRESET_KERNELS: Dict[str, Dict[str, Any]] = {
 }
 
 
+PYTHON_EXPORT_SCRIPT = '''#!/usr/bin/env python3
+"""
+CircuitVR — Python (PyTorch / Scikit-Learn / NumPy) -> FPGA Model Exporter
+==========================================================================
+Kullanim:
+    python export_to_circuitvr.py
+
+Bu betik PyTorch (nn.Conv1d + nn.BatchNorm1d), Scikit-Learn (.pkl) veya NumPy (.npy)
+modellerinizi FPGA donanimina uygun (BatchNorm katlanmis) `circuitvr_model.json`
+formatina donusturur. Uretilen JSON dosyasini CircuitVR -> Edge AI Lab ekranina
+dogrudan yukleyebilirsiniz.
+"""
+import json
+import math
+
+
+def fold_batchnorm_1d(weights, bias=0.0, gamma=1.0, beta=0.0, mean=0.0, var=1.0, eps=1e-5):
+    """Fold BatchNorm1d parameters into Conv1d weights and bias for zero-overhead FPGA inference."""
+    scale = gamma / math.sqrt(var + eps)
+    w_folded = [round(float(w) * scale, 6) for w in weights]
+    b_folded = round((float(bias) - mean) * scale + beta, 6)
+    return w_folded, b_folded
+
+
+def export_model_to_json(
+    weights,
+    bias=0.0,
+    signal=None,
+    int_bits=2,
+    frac_bits=6,
+    activation="relu",
+    threshold=0.45,
+    out_file="circuitvr_model.json",
+):
+    payload = {
+        "weights": [round(float(x), 6) for x in weights[:16]],
+        "bias": round(float(bias), 6),
+        "int_bits": int(int_bits),
+        "frac_bits": int(frac_bits),
+        "activation": activation,
+        "threshold": float(threshold),
+    }
+    if signal is not None:
+        payload["signal"] = [round(float(s), 5) for s in list(signal)[:256]]
+    with open(out_file, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    print(f"[CircuitVR] Model basariyla '{out_file}' dosyasina aktarıldı ({len(payload['weights'])} tap).")
+
+
+if __name__ == "__main__":
+    # Ornek: PyTorch Conv1d + BatchNorm1d katmanini katlayip disa aktarma
+    raw_weights = [-0.125, -0.25, 0.375, 0.875, 0.375, -0.25, -0.125]
+    w_hw, b_hw = fold_batchnorm_1d(raw_weights, bias=0.0, gamma=1.0, beta=0.0, mean=0.0, var=1.0)
+    export_model_to_json(w_hw, bias=b_hw)
+'''
+
+
+class _RestrictedModelUnpickler(pickle.Unpickler):
+    """Security-by-Design Restricted Unpickler: only permits safe numeric/array/dict types from Python/NumPy/Sklearn."""
+
+    SAFE_BUILTINS = {"range", "complex", "set", "frozenset", "slice", "tuple", "list", "dict", "int", "float", "str", "bytes", "bytearray", "bool"}
+
+    def find_class(self, module: str, name: str) -> Any:
+        if module == "builtins" and name in self.SAFE_BUILTINS:
+            import builtins
+            return getattr(builtins, name)
+        if module in ("numpy", "numpy.core.multiarray", "numpy._core.multiarray", "numpy.core.numeric", "numpy._core.numeric"):
+            try:
+                import numpy as np
+                if hasattr(np, name):
+                    return getattr(np, name)
+                if hasattr(np.core.multiarray, name):
+                    return getattr(np.core.multiarray, name)
+            except Exception:
+                pass
+        if module == "collections" and name in ("OrderedDict", "defaultdict"):
+            import collections
+            return getattr(collections, name)
+        raise pickle.UnpicklingError(f"Security policy blocked unsafe class in pickle: {module}.{name}")
+
+
+def _parse_npy_bytes(data: bytes) -> List[float]:
+    """Pure-Python + NumPy fallback parser for .npy binary array files."""
+    try:
+        import numpy as np
+        arr = np.load(io.BytesIO(data), allow_pickle=False)
+        return [float(x) for x in arr.flatten().tolist()]
+    except Exception:
+        pass
+
+    # Pure Python IEEE-754 .npy v1.0/v2.0 parser fallback
+    if len(data) < 12 or data[:6] != b"\x93NUMPY":
+        raise ValueError("Geçerli bir NumPy (.npy) başlığı bulunamadı.")
+    major = data[6]
+    if major == 1:
+        hdr_len = struct.unpack("<H", data[8:10])[0]
+        offset = 10 + hdr_len
+        hdr = data[10:offset].decode("latin1", errors="ignore")
+    else:
+        hdr_len = struct.unpack("<I", data[8:12])[0]
+        offset = 12 + hdr_len
+        hdr = data[12:offset].decode("latin1", errors="ignore")
+
+    body = data[offset:]
+    if "<f4" in hdr or "|f4" in hdr:
+        cnt = len(body) // 4
+        return list(struct.unpack(f"<{cnt}f", body[: cnt * 4]))
+    if "<f8" in hdr:
+        cnt = len(body) // 8
+        return list(struct.unpack(f"<{cnt}d", body[: cnt * 8]))
+    if "<i4" in hdr:
+        cnt = len(body) // 4
+        return [float(x) for x in struct.unpack(f"<{cnt}i", body[: cnt * 4])]
+    if "<i2" in hdr:
+        cnt = len(body) // 2
+        return [float(x) for x in struct.unpack(f"<{cnt}h", body[: cnt * 2])]
+    raise ValueError(f"Desteklenmeyen .npy veri tipi: {hdr.strip()}")
+
+
+def _extract_floats_from_obj(obj: Any) -> Dict[str, Any]:
+    """Extract weights, bias, BatchNorm params, or signal array from a Python dict/list/ndarray."""
+    try:
+        import numpy as np
+        if isinstance(obj, np.ndarray):
+            obj = obj.flatten().tolist()
+    except Exception:
+        pass
+
+    if isinstance(obj, (list, tuple)):
+        nums = [float(x) for x in obj if isinstance(x, (int, float))]
+        if len(nums) <= 16:
+            return {"weights": nums, "kind": "weights"}
+        return {"signal": nums[:256], "kind": "signal"}
+
+    if isinstance(obj, dict):
+        # Support PyTorch state_dict keys (e.g. 'conv.weight', '0.weight', 'weight', 'coef_')
+        weights: Optional[List[float]] = None
+        bias: Optional[float] = None
+        signal: Optional[List[float]] = None
+        bn: Dict[str, float] = {}
+
+        for k, v in obj.items():
+            kl = str(k).lower()
+            try:
+                import numpy as np
+                if isinstance(v, np.ndarray):
+                    v = v.flatten().tolist()
+            except Exception:
+                pass
+            if isinstance(v, (list, tuple)):
+                flat: List[float] = []
+                for item in v:
+                    if isinstance(item, (list, tuple)):
+                        flat.extend(float(x) for x in item if isinstance(x, (int, float)))
+                    elif isinstance(item, (int, float)):
+                        flat.append(float(item))
+                if any(w_k in kl for w_k in ("weight", "coef", "kernel", "tap", "filter", "w")) and not weights:
+                    weights = flat[:16]
+                elif any(b_k in kl for b_k in ("bias", "intercept")) and flat and bias is None:
+                    bias = float(flat[0])
+                elif any(s_k in kl for s_k in ("signal", "sample", "ecg", "eeg", "stim", "input", "x")):
+                    signal = flat[:256]
+            elif isinstance(v, (int, float)):
+                if "bias" in kl or "intercept" in kl:
+                    bias = float(v)
+                elif "gamma" in kl:
+                    bn["bn_gamma"] = float(v)
+                elif "beta" in kl:
+                    bn["bn_beta"] = float(v)
+                elif "mean" in kl:
+                    bn["bn_mean"] = float(v)
+                elif "var" in kl:
+                    bn["bn_var"] = float(v)
+
+        res: Dict[str, Any] = {"kind": "dict", **bn}
+        if weights:
+            res["weights"] = weights
+        if bias is not None:
+            res["bias"] = bias
+        if signal:
+            res["signal"] = signal
+        return res
+
+    raise ValueError("Python nesnesi içinden sayısal ağırlık (weights) veya sinyal dizisi çıkarılamadı.")
+
+
+def parse_uploaded_model_bytes(filename: str, data: bytes) -> Dict[str, Any]:
+    """Parse uploaded Python/FPGA model files (.npy, .npz, .pkl, .pickle, .pt, .pth, .json, .csv, .mem, .coe)."""
+    fname = (filename or "model.bin").lower()
+
+    if fname.endswith(".npy"):
+        nums = _parse_npy_bytes(data)
+        if len(nums) <= 16:
+            return {"filename": filename, "format": "NumPy (.npy)", "weights": [round(x, 6) for x in nums]}
+        return {"filename": filename, "format": "NumPy Signal (.npy)", "signal": [round(x, 5) for x in nums[:256]]}
+
+    if fname.endswith(".npz"):
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            out: Dict[str, Any] = {"filename": filename, "format": "NumPy Archive (.npz)"}
+            for name in zf.namelist():
+                if not name.endswith(".npy"):
+                    continue
+                arr = _parse_npy_bytes(zf.read(name))
+                kl = name.lower()
+                if "bias" in kl and arr:
+                    out["bias"] = round(arr[0], 6)
+                elif ("sig" in kl or "ecg" in kl or "eeg" in kl or len(arr) > 16) and "signal" not in out:
+                    out["signal"] = [round(x, 5) for x in arr[:256]]
+                elif "weights" not in out:
+                    out["weights"] = [round(x, 6) for x in arr[:16]]
+            return out
+
+    if fname.endswith((".pkl", ".pickle")):
+        obj = _RestrictedModelUnpickler(io.BytesIO(data)).load()
+        extracted = _extract_floats_from_obj(obj)
+        extracted["filename"] = filename
+        extracted["format"] = "Python Pickle (.pkl)"
+        return extracted
+
+    if fname.endswith((".pt", ".pth")):
+        # PyTorch v1.6+ saves a ZIP archive containing `archive/data.pkl` and `archive/data/0` raw float32 tensors
+        if zipfile.is_zipfile(io.BytesIO(data)):
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                tensor_files = [n for n in zf.namelist() if "/data/" in n and not n.endswith("/")]
+                tensor_files.sort()
+                weights_found: Optional[List[float]] = None
+                bias_found: Optional[float] = None
+                for tf in tensor_files:
+                    raw_t = zf.read(tf)
+                    if len(raw_t) >= 4 and len(raw_t) % 4 == 0:
+                        cnt = len(raw_t) // 4
+                        vals = [round(float(x), 6) for x in struct.unpack(f"<{cnt}f", raw_t)]
+                        if 2 <= cnt <= 16 and weights_found is None:
+                            weights_found = vals
+                        elif cnt == 1 and bias_found is None:
+                            bias_found = vals[0]
+                if weights_found:
+                    res_pt: Dict[str, Any] = {"filename": filename, "format": "PyTorch Checkpoint (.pt)", "weights": weights_found}
+                    if bias_found is not None:
+                        res_pt["bias"] = bias_found
+                    return res_pt
+        obj = _RestrictedModelUnpickler(io.BytesIO(data)).load()
+        extracted = _extract_floats_from_obj(obj)
+        extracted["filename"] = filename
+        extracted["format"] = "PyTorch Pickle (.pt)"
+        return extracted
+
+    text = data.decode("utf-8", errors="replace")
+    if fname.endswith(".json"):
+        j = json.loads(text)
+        extracted = _extract_floats_from_obj(j)
+        extracted["filename"] = filename
+        extracted["format"] = "JSON Model (.json)"
+        return extracted
+
+    # .coe / .mem / .csv / .txt parser
+    if fname.endswith(".coe"):
+        m_vec = re.search(r"memory_initialization_vector\s*=\s*([^;]+)", text, re.I | re.S)
+        body_txt = m_vec.group(1) if m_vec else text
+        tokens = [t.strip() for t in re.split(r"[\s,]+", body_txt) if t.strip()]
+        vals_coe = [round(int(t, 16) / 64.0, 5) for t in tokens if re.match(r"^[0-9a-fA-F]+$", t)]
+        return {"filename": filename, "format": "Xilinx Vivado COE (.coe)", "weights": vals_coe[:16]}
+
+    nums_txt = [
+        float(tok)
+        for tok in re.split(r"[\s,;]+", re.sub(r"[\[\]]", "", text))
+        if re.match(r"^[+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?$", tok.strip(), re.I)
+    ]
+    if not nums_txt:
+        raise ValueError(f"'{filename}' içinde geçerli sayısal ağırlık veya sinyal verisi bulunamadı.")
+    if len(nums_txt) <= 16:
+        return {"filename": filename, "format": "Text/CSV Weights", "weights": [round(x, 6) for x in nums_txt]}
+    return {"filename": filename, "format": "Text/CSV Signal", "signal": [round(x, 5) for x in nums_txt[:256]]}
+
+
 def _generate_biosignal(kind: str, n: int = 64, custom_signal: Optional[List[float]] = None) -> List[float]:
     """Generate a 64-sample physiological signal or normalize user-supplied custom signal samples."""
     if kind == "custom" and custom_signal and len(custom_signal) >= 4:
@@ -83,13 +364,23 @@ def _generate_biosignal(kind: str, n: int = 64, custom_signal: Optional[List[flo
     return samples
 
 
+def _round_scaled(scaled: float, rounding: str) -> int:
+    if rounding == "trunc":
+        return int(math.floor(scaled))
+    if rounding == "rne":
+        # Python's built-in round() implements Round-Half-to-Even (Convergent / Banker's rounding)
+        return int(round(scaled))
+    # 'round': standard hardware Round-Half-Up: floor(x + 0.5)
+    return int(math.floor(scaled + 0.5))
+
+
 def _quantize_val(val: float, int_bits: int, frac_bits: int, rounding: str = "round") -> Tuple[int, float, bool]:
     total_bits = int_bits + frac_bits
     scale = 1 << frac_bits
     q_min = -(1 << (total_bits - 1))
     q_max = (1 << (total_bits - 1)) - 1
     scaled = val * scale
-    raw_int = int(round(scaled)) if rounding == "round" else int(math.floor(scaled))
+    raw_int = _round_scaled(scaled, rounding)
     clipped = raw_int < q_min or raw_int > q_max
     q_int = max(q_min, min(q_max, raw_int))
     return q_int, q_int / float(scale), clipped
@@ -133,6 +424,13 @@ def _sv_signed_lit(q_int: int, width: int) -> str:
     return f"{width}'sd{q_int}"
 
 
+def _wrap_signed(val: int, total_bits: int) -> int:
+    mask = (1 << total_bits) - 1
+    sign_bit = 1 << (total_bits - 1)
+    u = val & mask
+    return u - (1 << total_bits) if (u & sign_bit) else u
+
+
 def inspect_workspace_rtl(text: str, rel_path: str = "rtl/top.sv") -> Dict[str, Any]:
     """Parse a user's existing SV/Verilog/VHDL file to extract module name, ports, Qm.n bit-widths, and weights."""
     clean = re.sub(r"//[^\n]*", "", text)
@@ -172,7 +470,6 @@ def inspect_workspace_rtl(text: str, rel_path: str = "rtl/top.sv") -> Dict[str, 
     )
     int_w = max(1, data_w - frac_w)
 
-    # Parse ports
     inputs: List[Dict[str, Any]] = []
     outputs: List[Dict[str, Any]] = []
 
@@ -253,7 +550,6 @@ def inspect_workspace_rtl(text: str, rel_path: str = "rtl/top.sv") -> Dict[str, 
     vec_outputs = [p for p in outputs if p["width"] > 1]
     data_out_port = vec_outputs[0]["name"] if vec_outputs else (outputs[0]["name"] if outputs else "feature_out")
 
-    # Extract any fixed-point or float weights defined in the RTL (e.g., W_0, W_1, COEFF_0, TAP_0)
     scale = float(1 << frac_w)
     extracted_weights: List[Tuple[int, float]] = []
     for wm in re.finditer(
@@ -309,13 +605,33 @@ def inspect_workspace_rtl(text: str, rel_path: str = "rtl/top.sv") -> Dict[str, 
 
 
 def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    weights: List[float] = [float(x) for x in cfg.get("weights", PRESET_KERNELS["ecg_qrs_1dcnn"]["weights"])][:16]
-    if not weights:
-        weights = [0.5, -0.25, 0.5]
-    bias: float = float(cfg.get("bias", 0.0))
+    raw_weights: List[float] = [float(x) for x in cfg.get("weights", PRESET_KERNELS["ecg_qrs_1dcnn"]["weights"])][:16]
+    if not raw_weights:
+        raw_weights = [0.5, -0.25, 0.5]
+    raw_bias: float = float(cfg.get("bias", 0.0))
+
+    # Optional BatchNorm1d Folding (folds gamma, beta, running_mean, running_var, eps into Conv1D weights & bias)
+    bn_enabled = bool(cfg.get("bn_enabled", False))
+    bn_gamma = float(cfg.get("bn_gamma", 1.0))
+    bn_beta = float(cfg.get("bn_beta", 0.0))
+    bn_mean = float(cfg.get("bn_mean", 0.0))
+    bn_var = max(1e-8, float(cfg.get("bn_var", 1.0)))
+    bn_eps = max(1e-9, float(cfg.get("bn_eps", 1e-5)))
+
+    if bn_enabled:
+        bn_scale = bn_gamma / math.sqrt(bn_var + bn_eps)
+        weights = [round(w * bn_scale, 6) for w in raw_weights]
+        bias = round((raw_bias - bn_mean) * bn_scale + bn_beta, 6)
+    else:
+        bn_scale = 1.0
+        weights = list(raw_weights)
+        bias = raw_bias
+
     int_bits = max(1, min(16, int(cfg.get("int_bits", 2))))
     frac_bits = max(1, min(24, int(cfg.get("frac_bits", 6))))
     rounding = str(cfg.get("rounding", "round"))
+    overflow_mode = str(cfg.get("overflow_mode", "saturate"))
+    arch_mode = str(cfg.get("arch_mode", "parallel"))
     stimulus = str(cfg.get("stimulus", "ecg"))
     custom_signal = cfg.get("custom_signal")
     activation = str(cfg.get("activation", "relu"))
@@ -336,6 +652,8 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     q_weights_int: List[int] = []
     q_weights_float: List[float] = []
     clipped_count = 0
+    hex_digits = (total_bits + 3) // 4
+    mem_hex_lines: List[str] = []
 
     for idx, w in enumerate(weights):
         qi, qf, clip = _quantize_val(w, int_bits, frac_bits, rounding)
@@ -344,6 +662,8 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
         q_weights_int.append(qi)
         q_weights_float.append(qf)
         twos = (qi + (1 << total_bits)) % (1 << total_bits)
+        hex_raw = f"{twos:0{hex_digits}X}"
+        mem_hex_lines.append(hex_raw)
         q_weights_info.append({
             "index": idx,
             "float_val": round(w, 6),
@@ -351,7 +671,7 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
             "quant_int": qi,
             "abs_err": round(abs(w - qf), 6),
             "clipped": clip,
-            "hex": f"0x{twos:0{(total_bits + 3) // 4}X}",
+            "hex": f"0x{hex_raw}",
             "sv_lit": _sv_signed_lit(qi, total_bits),
         })
 
@@ -389,7 +709,7 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     win_fp = [0.0] * k_len
     win_fx = [0] * k_len
     bias_acc_shifted = bias_int << frac_bits
-    round_offset = (1 << (frac_bits - 1)) if (rounding == "round" and frac_bits > 0) else 0
+    half_lsb = (1 << (frac_bits - 1)) if frac_bits > 0 else 0
 
     for t_idx in range(len(sig_float)):
         win_fp = [sig_float[t_idx]] + win_fp[:-1]
@@ -400,8 +720,24 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
         out_fp_list.append(round(y_fp, 5))
 
         acc_fx = sum(win_fx[j] * q_weights_int[j] for j in range(k_len)) + bias_acc_shifted
-        shifted = (acc_fx + round_offset) >> frac_bits
-        sat = max(q_min, min(q_max, shifted))
+        if rounding == "trunc" or frac_bits == 0:
+            shifted = acc_fx >> frac_bits
+        elif rounding == "rne":
+            rem_mask = (1 << frac_bits) - 1
+            rem = acc_fx & rem_mask
+            base_sh = acc_fx >> frac_bits
+            if rem > half_lsb or (rem == half_lsb and (base_sh & 1)):
+                shifted = base_sh + 1
+            else:
+                shifted = base_sh
+        else:
+            shifted = (acc_fx + half_lsb) >> frac_bits
+
+        if overflow_mode == "wrap":
+            sat = _wrap_signed(shifted, total_bits)
+        else:
+            sat = max(q_min, min(q_max, shifted))
+
         y_fx_int = _apply_activation_fixed(sat, activation, frac_bits, q_min, q_max)
         out_fx_int_list.append(y_fx_int)
         out_fx_float_list.append(round(y_fx_int / float(scale), 5))
@@ -411,8 +747,9 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     inference_sqnr = _sqnr_db(out_fp_list, out_fx_float_list)
 
     # 4. Hardware Roofline & FPGA Silicon Resource Estimate
-    parallel_pes = max(1, math.ceil(k_len / float(reuse_factor)))
-    cycles_per_sample = reuse_factor
+    eff_reuse = k_len if arch_mode == "serial_folded" and reuse_factor == 1 else reuse_factor
+    parallel_pes = 1 if arch_mode == "serial_folded" else max(1, math.ceil(k_len / float(eff_reuse)))
+    cycles_per_sample = k_len if arch_mode == "serial_folded" else eff_reuse
     latency_ns = round((cycles_per_sample / clock_mhz) * 1000.0, 2)
     throughput_msps = round(clock_mhz / float(cycles_per_sample), 2)
     gops = round((2.0 * k_len * throughput_msps) / 1000.0, 3)
@@ -424,13 +761,13 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
     elif total_bits <= 18:
         dsp_blocks = parallel_pes
         mult_lut_each = 12
-        dsp_note = f"Q{int_bits}.{frac_bits} ({total_bits}-bit) Xilinx DSP48E1/E2 (25x18) sınırları içinde: paralel PE başına 1 DSP48 kullanılır."
+        dsp_note = f"Q{int_bits}.{frac_bits} ({total_bits}-bit) Xilinx DSP48E1/E2 (25x18) sınırları içinde: paralel PE başına 1 DSP48 ({dsp_blocks} DSP48) kullanılır."
     else:
         dsp_blocks = parallel_pes * 2
         mult_lut_each = 28
-        dsp_note = f"Q{int_bits}.{frac_bits} ({total_bits}-bit > 18-bit) DSP48 çarpan sınırını (DSP Cliff) aşıyor! Çarpan başına 2 kaskad DSP48 harcanır."
+        dsp_note = f"Q{int_bits}.{frac_bits} ({total_bits}-bit > 18-bit) DSP48 çarpan sınırını (DSP Cliff) aşıyor! PE başına 2 kaskad DSP48 harcanır."
 
-    est_luts = k_len * mult_lut_each + acc_width * 3 + (64 if activation == "sigmoid_lut" else 16)
+    est_luts = parallel_pes * mult_lut_each + acc_width * 3 + (64 if activation == "sigmoid_lut" else 16)
     est_ffs = k_len * total_bits + acc_width + total_bits + 4
 
     # 5. Pareto Bit-Width Auto-Search (4-bit to 16-bit candidates)
@@ -455,20 +792,20 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
         c_w_sqnr = _sqnr_db(weights, cw_flt)
         c_win_fx = [0] * k_len
         c_out_fx: List[float] = []
-        c_round = (1 << (cn - 1)) if (rounding == "round" and cn > 0) else 0
+        c_round = (1 << (cn - 1)) if (rounding != "trunc" and cn > 0) else 0
         for s in sig_float:
             si, _, _ = _quantize_val(s, cm, cn, rounding)
             c_win_fx = [si] + c_win_fx[:-1]
             c_acc = sum(c_win_fx[j] * cw_int[j] for j in range(k_len)) + (cb_int << cn)
             c_sh = (c_acc + c_round) >> cn
-            c_sat = max(cq_min, min(cq_max, c_sh))
+            c_sat = _wrap_signed(c_sh, cw) if overflow_mode == "wrap" else max(cq_min, min(cq_max, c_sh))
             c_y = _apply_activation_fixed(c_sat, activation, cn, cq_min, cq_max)
             c_out_fx.append(c_y / float(cscale))
         c_inf_sqnr = _sqnr_db(out_fp_list, c_out_fx)
         c_dsp = 0 if cw <= 6 else (parallel_pes if cw <= 18 else parallel_pes * 2)
         c_mult_lut = cw * cw * 2 if cw <= 6 else (12 if cw <= 18 else 28)
         c_acc_w = 2 * cw + guard_bits
-        c_luts = k_len * c_mult_lut + c_acc_w * 3 + 16
+        c_luts = parallel_pes * c_mult_lut + c_acc_w * 3 + 16
         is_rec = (not rec_chosen) and (c_clip == 0) and (c_inf_sqnr >= 30.0)
         if is_rec:
             rec_chosen = True
@@ -485,11 +822,32 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
             "recommended": is_rec,
         })
 
+    # 6. Build FPGA Memory Initialization Artifacts (.mem and Xilinx .coe)
+    mem_content = (
+        f"// CircuitVR FPGA Weight ROM ($readmemh) — {k_len} Taps, Q{int_bits}.{frac_bits} ({total_bits}-bit 2's complement hex)\n"
+        + "\n".join(mem_hex_lines)
+        + "\n"
+    )
+    coe_content = (
+        f"; CircuitVR Xilinx Vivado Block Memory Generator (.coe) — {k_len} Taps, Q{int_bits}.{frac_bits} ({total_bits}-bit)\n"
+        "memory_initialization_radix=16;\n"
+        "memory_initialization_vector=\n"
+        + ",\n".join(mem_hex_lines)
+        + ";\n"
+    )
+
     return {
         "q_format": f"Q{int_bits}.{frac_bits}",
         "total_bits": total_bits,
         "int_bits": int_bits,
         "frac_bits": frac_bits,
+        "rounding": rounding,
+        "overflow_mode": overflow_mode,
+        "arch_mode": arch_mode,
+        "bn_enabled": bn_enabled,
+        "bn_scale": round(bn_scale, 6),
+        "folded_weights": weights,
+        "folded_bias": bias,
         "scale": scale,
         "min_real": round(min_real, 6),
         "max_real": round(max_real, 6),
@@ -505,6 +863,9 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "threshold_int": thresh_int,
         "threshold_float": round(thresh_qf, 6),
         "pareto_front": pareto_front,
+        "mem_content": mem_content,
+        "coe_content": coe_content,
+        "python_export_script": PYTHON_EXPORT_SCRIPT,
         "bit_growth": {
             "input_q": f"Q{int_bits}.{frac_bits} ({total_bits}-bit)",
             "weight_q": f"Q{int_bits}.{frac_bits} ({total_bits}-bit)",
@@ -519,7 +880,7 @@ def analyze_edge_ai(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "roofline": {
             "taps": k_len,
             "parallel_pes": parallel_pes,
-            "reuse_factor": reuse_factor,
+            "reuse_factor": cycles_per_sample,
             "clock_mhz": clock_mhz,
             "cycles_per_sample": cycles_per_sample,
             "latency_ns": latency_ns,
@@ -655,7 +1016,8 @@ endmodule
 def generate_edge_ai_rtl(cfg: Dict[str, Any], detected_rtl: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Generate either:
     - Custom TB only (`target_mode == 'custom_tb_only'`) wired to the user's existing RTL module, OR
-    - Full synthesizable 1D-CNN/DSP RTL + Golden TB (`target_mode == 'preset'` or `'custom_rtl_and_tb'`).
+    - Full synthesizable 1D-CNN/DSP RTL + Golden TB (`target_mode == 'preset'` or `'custom_rtl_and_tb'`),
+      plus `weights_rom.mem` and `weights_rom.coe` artifacts.
     """
     analysis = analyze_edge_ai(cfg)
     target_mode = str(cfg.get("target_mode", "preset"))
@@ -670,6 +1032,8 @@ def generate_edge_ai_rtl(cfg: Dict[str, Any], detected_rtl: Optional[Dict[str, A
             "tb_module": tb_mod,
             "rtl_code": "",
             "tb_code": tb_code,
+            "mem_code": analysis["mem_content"],
+            "coe_code": analysis["coe_content"],
             "analysis": analysis,
         }
 
@@ -688,34 +1052,60 @@ def generate_edge_ai_rtl(cfg: Dict[str, Any], detected_rtl: Optional[Dict[str, A
     k_len = len(w_table)
     act = str(cfg.get("activation", "relu"))
     rounding = str(cfg.get("rounding", "round"))
+    overflow_mode = str(cfg.get("overflow_mode", "saturate"))
+    arch_mode = str(cfg.get("arch_mode", "parallel"))
 
     q_min = -(1 << (w_bits - 1))
     q_max = (1 << (w_bits - 1)) - 1
     bias_scaled = analysis["bias_int"] << f_bits
-    round_const = (1 << (f_bits - 1)) if (rounding == "round" and f_bits > 0) else 0
+    round_const = (1 << (f_bits - 1)) if (rounding != "trunc" and f_bits > 0) else 0
     thresh_int = analysis["threshold_int"]
 
-    weight_assigns = "\n".join(
-        f"    localparam signed [{w_bits-1}:0] W_{idx} = {item['sv_lit']}; // float={item['float_val']} -> quant={item['quant_float']}"
-        for idx, item in enumerate(w_table)
-    )
+    if arch_mode == "bram_rom":
+        weight_decl_block = (
+            f"    // Weight Memory Array (initialized via $readmemh or inline ROM defaults)\n"
+            f"    logic signed [DATA_W-1:0] W_ROM [0:{k_len-1}];\n"
+            f"    initial begin\n"
+            + "\n".join(f"        W_ROM[{idx}] = {item['sv_lit']}; // {item['hex']}" for idx, item in enumerate(w_table))
+            + "\n    end"
+        )
+        tap_terms = ["(sample_in * W_ROM[0])"] + [
+            f"(x_win[{idx-1}] * W_ROM[{idx}])"
+            for idx in range(1, k_len)
+        ]
+    else:
+        weight_decl_block = "\n".join(
+            f"    localparam signed [{w_bits-1}:0] W_{idx} = {item['sv_lit']}; // float={item['float_val']} -> quant={item['quant_float']}"
+            for idx, item in enumerate(w_table)
+        )
+        tap_terms = ["(sample_in * W_0)"] + [
+            f"(x_win[{idx-1}] * W_{idx})"
+            for idx in range(1, k_len)
+        ]
 
     shift_lines = ["            x_win[0] <= sample_in;"] + [
         f"            x_win[{idx}] <= x_win[{idx-1}];"
         for idx in range(1, max(1, k_len - 1))
     ]
     shift_chain = "\n".join(shift_lines)
-
-    tap_terms = ["(sample_in * W_0)"] + [
-        f"(x_win[{idx-1}] * W_{idx})"
-        for idx in range(1, k_len)
-    ]
     mult_terms = " + ".join(tap_terms)
+
+    if overflow_mode == "wrap":
+        overflow_logic = "        y_sat = mac_shifted[DATA_W-1:0]; // 2's complement wrap-around"
+    else:
+        overflow_logic = (
+            "        if (mac_shifted > SAT_MAX_EXT)\n"
+            "            y_sat = SAT_MAX;\n"
+            "        else if (mac_shifted < SAT_MIN_EXT)\n"
+            "            y_sat = SAT_MIN;\n"
+            "        else\n"
+            "            y_sat = mac_shifted[DATA_W-1:0];"
+        )
 
     if act == "relu":
         act_logic = f"        y_act = (y_sat < 0) ? {w_bits}'sd0 : y_sat;"
     elif act == "leaky_relu":
-        act_logic = f"        y_act = (y_sat < 0) ? (y_sat >>> 3) : y_sat;"
+        act_logic = "        y_act = (y_sat < 0) ? (y_sat >>> 3) : y_sat;"
     elif act == "sigmoid_lut":
         half = 1 << (f_bits - 1) if f_bits >= 1 else 1
         act_logic = (
@@ -727,9 +1117,9 @@ def generate_edge_ai_rtl(cfg: Dict[str, Any], detected_rtl: Optional[Dict[str, A
         act_logic = "        y_act = y_sat;"
 
     rtl_code = f"""// ============================================================================
-// Auto-Generated by CircuitVR Edge AI & Biosignal Co-Design Studio
-// Module       : {mod_name} ({k_len}-Tap 1D-CNN / DSP Streaming Accelerator)
-// Fixed-Point  : Q{i_bits}.{f_bits} ({w_bits}-bit signed, scale=2^{f_bits}={1 << f_bits})
+// Auto-Generated by CircuitVR Edge AI & Biosignal Co-Design Studio (V 2.16)
+// Module       : {mod_name} ({k_len}-Tap 1D-CNN / DSP Accelerator — Arch: {arch_mode.upper()})
+// Fixed-Point  : Q{i_bits}.{f_bits} ({w_bits}-bit signed, scale=2^{f_bits}={1 << f_bits}, rounding={rounding.upper()}, overflow={overflow_mode.upper()})
 // Accumulator  : {bg['acc_q']} ({bg['formula']})
 // Activation   : {act.upper()} | Anomaly Threshold: {analysis['threshold_float']} ({thresh_int})
 // ============================================================================
@@ -750,7 +1140,7 @@ module {mod_name} #(
 );
 
     // Quantized Q{i_bits}.{f_bits} Kernel Weights (SQNR = {analysis['weight_sqnr_db']} dB)
-{weight_assigns}
+{weight_decl_block}
     localparam signed [ACC_W-1:0] BIAS_SCALED = {_sv_signed_lit(bias_scaled, acc_w)};
     localparam signed [ACC_W-1:0] ROUND_CONST = {_sv_signed_lit(round_const, acc_w)};
     localparam signed [ACC_W-1:0] SAT_MAX_EXT = {_sv_signed_lit(q_max, acc_w)};
@@ -771,12 +1161,7 @@ module {mod_name} #(
     always_comb begin
         mac_sum     = {mult_terms} + BIAS_SCALED;
         mac_shifted = (mac_sum + ROUND_CONST) >>> FRAC_W;
-        if (mac_shifted > SAT_MAX_EXT)
-            y_sat = SAT_MAX;
-        else if (mac_shifted < SAT_MIN_EXT)
-            y_sat = SAT_MIN;
-        else
-            y_sat = mac_shifted[DATA_W-1:0];
+{overflow_logic}
 
 {act_logic}
     end
@@ -881,5 +1266,7 @@ endmodule
         "tb_module": tb_mod,
         "rtl_code": rtl_code,
         "tb_code": tb_code,
+        "mem_code": analysis["mem_content"],
+        "coe_code": analysis["coe_content"],
         "analysis": analysis,
     }

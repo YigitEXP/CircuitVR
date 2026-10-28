@@ -386,6 +386,24 @@ class EdgeAiReq(BaseModel):
     target_mode: str = "preset"
     custom_rtl_file: Optional[str] = None
     module_name: Optional[str] = None
+    overflow_mode: str = "saturate"
+    arch_mode: str = "parallel"
+    bn_enabled: bool = False
+    bn_gamma: float = 1.0
+    bn_beta: float = 0.0
+    bn_mean: float = 0.0
+    bn_var: float = 1.0
+    bn_eps: float = 1e-5
+
+
+@router.post("/edge-ai/import-model")
+async def edge_ai_import_model(file: UploadFile = File(...)):
+    from app.services.edge_ai_service import parse_uploaded_model_bytes
+    raw_bytes = await file.read()
+    try:
+        return parse_uploaded_model_bytes(file.filename or "model.bin", raw_bytes)
+    except Exception as e:
+        raise HTTPException(400, f"Model dosyası ayrıştırılamadı: {e}")
 
 
 @router.post("/edge-ai/inspect-rtl")

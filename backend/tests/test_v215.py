@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services import workspace_service as ws
-from app.services.edge_ai_service import analyze_edge_ai, inspect_workspace_rtl
+from app.services.edge_ai_service import analyze_edge_ai, inspect_workspace_rtl, parse_uploaded_model_bytes
 from app.services.fsm_service import extract_workspace_fsms
 from app.services.optimizer_service import (
     analyze_optimizations,
@@ -127,6 +127,30 @@ endmodule
         self.assertEqual(insp["module_name"], "my_fir")
         self.assertEqual(insp["data_w"], 12)
         self.assertEqual(insp["frac_bits"], 8)
+
+    def test_python_pickle_npy_and_batchnorm_folding_and_mem_coe(self):
+        import pickle
+        raw_dict = {"weights": [-0.25, 0.5, 0.75, 0.5, -0.25], "bias": 0.125, "bn_gamma": 2.0, "bn_var": 4.0}
+        pkl_bytes = pickle.dumps(raw_dict)
+        parsed = parse_uploaded_model_bytes("my_model.pkl", pkl_bytes)
+        self.assertEqual(parsed["format"], "Python Pickle (.pkl)")
+        self.assertEqual(len(parsed["weights"]), 5)
+
+        ai_bn = analyze_edge_ai({
+            "weights": parsed["weights"],
+            "bias": parsed["bias"],
+            "bn_enabled": True,
+            "bn_gamma": 2.0,
+            "bn_beta": 0.0,
+            "bn_mean": 0.0,
+            "bn_var": 4.0,
+            "rounding": "rne",
+            "overflow_mode": "saturate",
+            "arch_mode": "bram_rom",
+        })
+        self.assertTrue(ai_bn["bn_enabled"])
+        self.assertIn("memory_initialization_radix=16;", ai_bn["coe_content"])
+        self.assertIn("$readmemh", ai_bn["mem_content"])
 
 
 if __name__ == "__main__":

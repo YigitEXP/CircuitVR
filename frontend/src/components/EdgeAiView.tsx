@@ -1,6 +1,6 @@
 import { ChangeEvent, useEffect, useRef, useState } from 'react';
 import {
-  BrainCircuit, Cpu, Activity, Sparkles, ArrowRight, CheckCircle2, AlertTriangle, Play, Workflow, Code2, Loader2, Upload, FileCode2, FolderSearch, RefreshCw,
+  BrainCircuit, Cpu, Activity, Sparkles, ArrowRight, CheckCircle2, AlertTriangle, Play, Workflow, Code2, Loader2, Upload, FileCode2, FolderSearch, RefreshCw, Download, Layers,
 } from 'lucide-react';
 import { EdgeAiAnalysis, EdgeAiConfig, InspectedRtlInfo, WorkspaceInfo } from '../types';
 import { errMsg, ws } from '../services/api';
@@ -258,6 +258,16 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
     }
   };
 
+  const downloadTextFile = (filename: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleModelFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -265,68 +275,38 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
     setErr('');
     setUploadNotice('');
     try {
-      const text = await file.text();
-      if (file.name.toLowerCase().endsWith('.json')) {
-        const j = JSON.parse(text);
-        if (Array.isArray(j)) {
-          const nums = j.map(Number).filter((n) => !Number.isNaN(n));
-          if (nums.length <= 16) {
-            setWeightsText(nums.join(', '));
-            setCfg((c) => ({ ...c, weights: nums }));
-            setUploadNotice(isTr ? `✓ ${file.name}: ${nums.length} adet ağırlık yüklendi.` : `✓ ${file.name}: Loaded ${nums.length} weights.`);
-          } else {
-            setCustomSignalText(nums.slice(0, 128).join(', '));
-            setCfg((c) => ({ ...c, stimulus: 'custom', custom_signal: nums.slice(0, 256) }));
-            setUploadNotice(isTr ? `✓ ${file.name}: ${nums.length} örnekli özel test sinyali yüklendi.` : `✓ ${file.name}: Loaded ${nums.length}-sample custom signal.`);
-          }
-        } else if (typeof j === 'object' && j !== null) {
-          const nextWeights = Array.isArray(j.weights) ? j.weights.map(Number).filter((n: number) => !Number.isNaN(n)).slice(0, 16) : cfg.weights;
-          const nextSig = Array.isArray(j.signal || j.samples) ? (j.signal || j.samples).map(Number).filter((n: number) => !Number.isNaN(n)).slice(0, 256) : undefined;
-          setWeightsText(nextWeights.join(', '));
-          if (nextSig) setCustomSignalText(nextSig.slice(0, 64).join(', '));
-          setCfg((c) => ({
-            ...c,
-            weights: nextWeights,
-            bias: typeof j.bias === 'number' ? j.bias : c.bias,
-            int_bits: typeof j.int_bits === 'number' ? j.int_bits : c.int_bits,
-            frac_bits: typeof j.frac_bits === 'number' ? j.frac_bits : c.frac_bits,
-            threshold: typeof j.threshold === 'number' ? j.threshold : c.threshold,
-            activation: j.activation || c.activation,
-            stimulus: nextSig ? 'custom' : c.stimulus,
-            custom_signal: nextSig || c.custom_signal,
-          }));
-          setUploadNotice(
-            isTr
-              ? `✓ ${file.name} model konfigürasyonu (${nextWeights.length} ağırlık${nextSig ? ` + ${nextSig.length} sinyal örneği` : ''}) başarıyla içe aktarıldı.`
-              : `✓ Imported ${file.name} (${nextWeights.length} weights${nextSig ? ` + ${nextSig.length} signal samples` : ''}).`
-          );
-        }
-      } else {
-        // CSV / TXT / MEM parser
-        const nums = text
-          .replace(/[\[\]]/g, '')
-          .split(/[\s,;]+/)
-          .map((s) => Number(s.trim()))
-          .filter((n) => !Number.isNaN(n));
-        if (nums.length === 0) {
-          throw new Error(isTr ? 'Dosya içerisinde geçerli sayısal ağırlık veya sinyal verisi bulunamadı.' : 'No numeric weights or signal samples found in file.');
-        }
-        if (nums.length <= 16) {
-          setWeightsText(nums.join(', '));
-          setCfg((c) => ({ ...c, weights: nums }));
-          setUploadNotice(isTr ? `✓ ${file.name}: ${nums.length} adet çekirdek ağırlığı yüklendi.` : `✓ ${file.name}: Loaded ${nums.length} kernel weights.`);
-        } else {
-          setCustomSignalText(nums.slice(0, 64).join(', '));
-          setCfg((c) => ({ ...c, stimulus: 'custom', custom_signal: nums.slice(0, 256) }));
-          setUploadNotice(
-            isTr
-              ? `✓ ${file.name}: ${nums.length} örnekli özel biyosinyal verisi Testbench girişi olarak yüklendi.`
-              : `✓ ${file.name}: Loaded ${nums.length} custom signal samples as Testbench stimulus.`
-          );
-        }
+      const imp = await ws.edgeAiImportModel(file);
+      if (imp.weights && imp.weights.length > 0) {
+        setWeightsText(imp.weights.join(', '));
       }
+      if (imp.signal && imp.signal.length > 0) {
+        setCustomSignalText(imp.signal.slice(0, 64).join(', '));
+      }
+      setCfg((c) => ({
+        ...c,
+        weights: imp.weights && imp.weights.length > 0 ? imp.weights.slice(0, 16) : c.weights,
+        bias: typeof imp.bias === 'number' ? imp.bias : c.bias,
+        stimulus: imp.signal && imp.signal.length >= 4 ? 'custom' : c.stimulus,
+        custom_signal: imp.signal && imp.signal.length >= 4 ? imp.signal.slice(0, 256) : c.custom_signal,
+        bn_enabled: typeof imp.bn_gamma === 'number' || typeof imp.bn_var === 'number' ? true : c.bn_enabled,
+        bn_gamma: typeof imp.bn_gamma === 'number' ? imp.bn_gamma : c.bn_gamma,
+        bn_beta: typeof imp.bn_beta === 'number' ? imp.bn_beta : c.bn_beta,
+        bn_mean: typeof imp.bn_mean === 'number' ? imp.bn_mean : c.bn_mean,
+        bn_var: typeof imp.bn_var === 'number' ? imp.bn_var : c.bn_var,
+      }));
+      setUploadNotice(
+        isTr
+          ? `✓ [${imp.format}] ${imp.filename} yüklendi` +
+              (imp.weights ? ` (${imp.weights.length} çekirdek ağırlığı)` : '') +
+              (imp.signal ? ` (${imp.signal.length} sinyal örneği)` : '')
+          : `✓ [${imp.format}] Loaded ${imp.filename}` +
+              (imp.weights ? ` (${imp.weights.length} weights)` : '') +
+              (imp.signal ? ` (${imp.signal.length} signal samples)` : '')
+      );
+      return;
     } catch (ex: any) {
       setErr(ex?.message || String(ex));
+      return;
     }
   };
 
@@ -497,7 +477,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
             <input
               ref={modelFileRef}
               type="file"
-              accept=".json,.csv,.txt,.mem,.coe"
+              accept=".pkl,.pickle,.npy,.npz,.pt,.pth,.json,.csv,.txt,.mem,.coe"
               className="hidden"
               onChange={handleModelFileUpload}
             />
@@ -507,8 +487,19 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               className="tool-btn bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 text-xs flex items-center gap-1.5"
             >
               <Upload className="w-3.5 h-3.5" />
-              {isTr ? 'Dışarıdan Model / Sinyal Yükle (.json, .csv, .txt)' : 'Upload Custom Model / Signal (.json, .csv, .txt)'}
+              {isTr ? 'Python Modeli / Sinyal Yükle (.pkl, .npy, .npz, .pt, .json, .csv, .coe)' : 'Import Python Model / Signal (.pkl, .npy, .npz, .pt, .json, .csv, .coe)'}
             </button>
+            {analysis?.python_export_script && (
+              <button
+                type="button"
+                onClick={() => downloadTextFile('export_to_circuitvr.py', analysis.python_export_script!)}
+                className="tool-btn bg-indigo-950/60 hover:bg-indigo-900/70 text-indigo-300 border border-indigo-500/40 text-xs flex items-center gap-1.5"
+                title={isTr ? 'PyTorch / Scikit-Learn / NumPy modellerini tek komutla dışa aktaran Python betiğini indir' : 'Download Python helper script for PyTorch / Sklearn / NumPy'}
+              >
+                <Download className="w-3.5 h-3.5" />
+                {isTr ? '🐍 export_to_circuitvr.py İndir' : '🐍 Download export_to_circuitvr.py'}
+              </button>
+            )}
           </div>
 
           {uploadNotice && (
@@ -725,6 +716,66 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               />
             </div>
           )}
+          {/* PyTorch / Keras BatchNorm1d Folding Engine */}
+          <div className="bg-darker/90 border border-slate-800 rounded-lg p-2.5 space-y-2 text-xs">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="font-medium text-indigo-300 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5" />
+                {isTr ? 'PyTorch BatchNorm1d Katlama (Fold into Conv1D)' : 'Fold PyTorch BatchNorm1d into Conv1D'}
+              </span>
+              <input
+                type="checkbox"
+                checked={!!cfg.bn_enabled}
+                onChange={(e) => setCfg({ ...cfg, bn_enabled: e.target.checked })}
+                className="accent-indigo-500"
+              />
+            </label>
+            {cfg.bn_enabled && (
+              <div className="grid grid-cols-4 gap-1.5 pt-1 text-[11px] font-mono">
+                <label className="space-y-0.5">
+                  <span className="text-slate-400">γ (gamma)</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={cfg.bn_gamma ?? 1.0}
+                    onChange={(e) => setCfg({ ...cfg, bn_gamma: Number(e.target.value) })}
+                    className="input-field text-[11px] py-1"
+                  />
+                </label>
+                <label className="space-y-0.5">
+                  <span className="text-slate-400">β (beta)</span>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={cfg.bn_beta ?? 0.0}
+                    onChange={(e) => setCfg({ ...cfg, bn_beta: Number(e.target.value) })}
+                    className="input-field text-[11px] py-1"
+                  />
+                </label>
+                <label className="space-y-0.5">
+                  <span className="text-slate-400">μ (mean)</span>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={cfg.bn_mean ?? 0.0}
+                    onChange={(e) => setCfg({ ...cfg, bn_mean: Number(e.target.value) })}
+                    className="input-field text-[11px] py-1"
+                  />
+                </label>
+                <label className="space-y-0.5">
+                  <span className="text-slate-400">σ² (var)</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.001"
+                    value={cfg.bn_var ?? 1.0}
+                    onChange={(e) => setCfg({ ...cfg, bn_var: Math.max(0.0001, Number(e.target.value) || 1.0) })}
+                    className="input-field text-[11px] py-1"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Column 2: Fixed-Point Qm.n & Bit-Growth */}
@@ -781,8 +832,35 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                 onChange={(e) => setCfg({ ...cfg, rounding: e.target.value as EdgeAiConfig['rounding'] })}
                 className="input-field text-xs py-1.5"
               >
-                <option value="round">{isTr ? 'En Yakına Yuvarla (+0.5 LSB)' : 'Round-to-Nearest (+0.5 LSB)'}</option>
+                <option value="round">{isTr ? 'Round-Half-Up (+0.5 LSB)' : 'Round-Half-Up (+0.5 LSB)'}</option>
+                <option value="rne">{isTr ? 'Yakınsak / Çifte Yuvarla (RNE - IEEE)' : 'Round-to-Nearest-Even (RNE)'}</option>
                 <option value="trunc">{isTr ? 'Doğrudan Kesme (Truncate)' : 'Direct Truncation'}</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-[11px] text-slate-400">{isTr ? 'Taşma (Overflow) Modu' : 'Overflow Mode'}</span>
+              <select
+                value={cfg.overflow_mode ?? 'saturate'}
+                onChange={(e) => setCfg({ ...cfg, overflow_mode: e.target.value as EdgeAiConfig['overflow_mode'] })}
+                className="input-field text-xs py-1.5"
+              >
+                <option value="saturate">{isTr ? 'Doyma / Clamping (Saturate)' : 'Saturate (Clamping)'}</option>
+                <option value="wrap">{isTr ? '2\'s Complement Wrap-Around' : 'Wrap-Around (No Clamp)'}</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <label className="space-y-1">
+              <span className="text-[11px] text-slate-400">{isTr ? 'Donanım Mimarisi (RTL)' : 'Hardware Architecture'}</span>
+              <select
+                value={cfg.arch_mode ?? 'parallel'}
+                onChange={(e) => setCfg({ ...cfg, arch_mode: e.target.value as EdgeAiConfig['arch_mode'] })}
+                className="input-field text-xs py-1.5"
+              >
+                <option value="parallel">{isTr ? 'Paralel Çarpıcı Ağacı (1-Cycle)' : 'Parallel Adder Tree (1-Cycle)'}</option>
+                <option value="bram_rom">{isTr ? 'BRAM / LUTRAM ($readmemh .mem)' : 'BRAM / LUTRAM ($readmemh .mem)'}</option>
+                <option value="serial_folded">{isTr ? 'Zaman-Çoğullamalı Seri MAC (1 PE)' : 'Time-Multiplexed Serial MAC'}</option>
               </select>
             </label>
             <label className="space-y-1">
@@ -1036,12 +1114,45 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
             />
           </div>
 
-          {/* Quantized Weight ROM Table */}
+          {/* Quantized Weight ROM Table & FPGA Memory Exporters (.mem / .coe) */}
           <div className="card space-y-2">
-            <div className="text-xs font-semibold text-slate-200">
-              {isTr
-                ? `Niceleme Tablosu & SystemVerilog Ağırlık ROM Sabitleri (${analysis.q_format})`
-                : `Quantized Weight Table & SystemVerilog ROM Constants (${analysis.q_format})`}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-semibold text-slate-200">
+                {isTr
+                  ? `Niceleme Tablosu & SystemVerilog Ağırlık ROM Sabitleri (${analysis.q_format})`
+                  : `Quantized Weight Table & SystemVerilog ROM Constants (${analysis.q_format})`}
+              </div>
+              <div className="flex items-center gap-2">
+                {analysis.mem_content && (
+                  <button
+                    type="button"
+                    onClick={() => downloadTextFile('weights_rom.mem', analysis.mem_content!)}
+                    className="px-2.5 py-1 rounded bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 text-[11px] font-mono flex items-center gap-1"
+                    title={isTr ? 'SystemVerilog $readmemh için 2\'s complement Hex bellek dosyasını indir' : 'Download $readmemh .mem file'}
+                  >
+                    <Download className="w-3 h-3" /> weights_rom.mem ($readmemh)
+                  </button>
+                )}
+                {analysis.coe_content && (
+                  <button
+                    type="button"
+                    onClick={() => downloadTextFile('weights_rom.coe', analysis.coe_content!)}
+                    className="px-2.5 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-[11px] font-mono flex items-center gap-1"
+                    title={isTr ? 'Xilinx Vivado Block Memory Generator (.coe) dosyasını indir' : 'Download Xilinx Vivado BRAM .coe file'}
+                  >
+                    <Download className="w-3 h-3" /> weights_rom.coe (Vivado BRAM)
+                  </button>
+                )}
+                {analysis.python_export_script && (
+                  <button
+                    type="button"
+                    onClick={() => downloadTextFile('export_to_circuitvr.py', analysis.python_export_script!)}
+                    className="px-2.5 py-1 rounded bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-indigo-300 text-[11px] font-mono flex items-center gap-1"
+                  >
+                    <Download className="w-3 h-3" /> export_to_circuitvr.py
+                  </button>
+                )}
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs font-mono border-collapse">

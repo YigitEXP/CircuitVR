@@ -1,6 +1,6 @@
 import axios from 'axios';
 import {
-  AutoFixResponse, DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, FsmReport, InspectedRtlInfo, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
+  AutoFixResponse, DirListing, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, FsmReport, ImportedModelResult, InspectedRtlInfo, LintResult, OptimizationReport, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo,
 } from '../types';
 import { cloudFallback } from './cloudFallback';
 
@@ -126,6 +126,14 @@ export const ws = {
       .post<WaveData>(`${P}/wave`, { path, vcd })
       .then((r) => r.data)
       .catch(() => cloudFallback.wave());
+  },
+  edgeAiImportModel: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    return api
+      .post<ImportedModelResult>(`${P}/edge-ai/import-model`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => r.data)
+      .catch(() => cloudFallback.edgeAiImportModel(file));
   },
   edgeAiInspectRtl: (path: string, file: string) => {
     if (isCloudPath(path)) return Promise.resolve(cloudFallback.edgeAiInspectRtl(path, file));

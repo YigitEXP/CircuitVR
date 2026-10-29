@@ -6,8 +6,8 @@
 
 ### **SystemVerilog · Verilog · VHDL RTL, Hardware Security & Edge AI Co-Design Studio**
 
-*Gerçek Zamanlı Sentez Şematiği & Kritik Yol ($F_{\max}$), VCD/Analog Dalga Formu, Tek-Tık Auto-Fix & Donanım Güvenlik Denetçisi (SecLinter), Otomatik FSM Durum Diyagramı ve Python (`.pkl`/`.npy`/`.pt`) ➔ Sabit Noktalı ($Qm.n$) 1D-CNN Biyosinyal Donanım Sentezleyicisi*  
-*Real-Time Synthesis Schematics & Critical Path ($F_{\max}$), VCD/Analog Waveform, One-Click Auto-Fix & Hardware Security Linter (SecLinter), Automatic FSM State Diagram & Python (`.pkl`/`.npy`/`.pt`) ➔ Fixed-Point ($Qm.n$) 1D-CNN Biosignal Hardware Studio*
+*Gerçek Zamanlı Sentez Şematiği & Kritik Yol ($F_{\max}$), VCD/Analog Dalga Formu, Tek-Tık Auto-Fix & Donanım Güvenlik Denetçisi (SecLinter), Çift Yönlü FSM Durum Diyagramı ve Python (`.pkl`/`.npy`/`.pt`/`.mem`) ➔ Sabit Noktalı ($Qm.n$) 1D-CNN Biyosinyal Donanım Sentezleyicisi*  
+*Real-Time Synthesis Schematics & Critical Path ($F_{\max}$), VCD/Analog Waveform, One-Click Auto-Fix & Hardware Security Linter (SecLinter), Two-Way FSM State Diagram & Python (`.pkl`/`.npy`/`.pt`/`.mem`) ➔ Fixed-Point ($Qm.n$) 1D-CNN Biosignal Hardware Studio*
 
 [![HDL Support](https://img.shields.io/badge/HDL-SystemVerilog%20%7C%20Verilog%20%7C%20VHDL-6366f1?style=for-the-badge)](#)
 [![Edge AI](https://img.shields.io/badge/Edge%20AI-PyTorch%20.pt%2F.pkl%2F.npy%20%7C%20BatchNorm%20Fold%20%7C%20Qm.n-8b5cf6?style=for-the-badge)](#)
@@ -16,7 +16,37 @@
 [![Frontend](https://img.shields.io/badge/Frontend-React%2018%20%2B%20TypeScript%20%2B%20ELKjs-38bdf8?style=for-the-badge)](#)
 [![Backend](https://img.shields.io/badge/Backend-FastAPI%20%2B%20Python%203.11%2B-f59e0b?style=for-the-badge)](#)
 
-[**🇹🇷 Türkçe Dokümantasyon**](#-türkçe-dokümantasyon) • [**🇬🇧 English Documentation**](#-english-documentation) • [**⚡ Tek Tık Kurulum**](#-1-hızlı-ve-tam-otomatik-kurulum-sıfır-ayar) • [**🧬 Edge AI Lab**](#-f-edge-ai--biyosinyal-1d-cnn--dsp-donanım-ortak-tasarım-stüdyosu-edge-ai-lab)
+[**🇹🇷 Türkçe Dokümantasyon**](#-türkçe-dokümantasyon) • [**🇬🇧 English Documentation**](#-english-documentation) • [**📸 Ekran Görüntüleri Galerisi**](#-canlı-arayüz-ve-görsel-tur--visual-showcase) • [**⚡ Hızlı Kurulum**](#-1-hızlı-ve-tam-otomatik-kurulum-sıfır-ayar) • [**🧬 Edge AI Lab**](#-f-edge-ai--biyosinyal-1d-cnn--dsp-donanım-ortak-tasarım-stüdyosu-edge-ai-lab)
+
+</div>
+
+---
+
+## 📸 Canlı Arayüz ve Görsel Tur / Visual Showcase
+
+CircuitVR'ın son sürümüyle (V 2.16) çalışan gerçek bir **1D-CNN Biyosinyal EKG Aritmi Tespiti** projesi (`SV_Kodlar` + `ecg_anomaly.mem`) üzerinden alınmış canlı ekran görüntüleri:
+
+<div align="center">
+
+| 1. Monaco Kod Editörü & RTL Parametreleri | 2. Etkileşimli Şematik & Kapı Detay Tooltip'i |
+| :---: | :---: |
+| [![Code Editor](samples/01_code_editor_edge_ai.png)](samples/01_code_editor_edge_ai.png) | [![Schematic Viewer](samples/02_schematic_interactive_viewer.png)](samples/02_schematic_interactive_viewer.png) |
+| *SystemVerilog canlı doğrulama, MAC parametreleri (`W0, W1, W2`) ve kaydırma penceresi.* | *Yüzen kontrol çubuğu (`Zoom/Fit/SVG`), kapı gecikmeleri ve port bit genişlikleri tooltip'i.* |
+
+| 3. Çift Yönlü FSM & Optimizasyon Analizi | 4. Dalga Formu, Canlı Ölçüm HUD & Sinyal Arama |
+| :---: | :---: |
+| [![FSM & Analysis](samples/03_fsm_optimization_analysis.png)](samples/03_fsm_optimization_analysis.png) | [![Waveform HUD](samples/04_waveform_biosignal_spike.png)](samples/04_waveform_biosignal_spike.png) |
+| *Diyagrama tıklandığında koddaki satıra atlama, tablo hover parlaması ve ölü durum tespiti.* | *Marker A/B zaman farkı ($\Delta t$), MHz frekans HUD göstergesi ve anomali tetikleme sinyali.* |
+
+| 5. Edge AI Lab (Genişletilmiş 3-Kart Görünümü) | 6. Tam Ekran Pareto SQNR vs LUT Tasarım Uzayı |
+| :---: | :---: |
+| [![Edge AI Studio](samples/05_edge_ai_studio_overview.png)](samples/05_edge_ai_studio_overview.png) | [![Pareto Maximized](samples/06_pareto_design_space_maximized.png)](samples/06_pareto_design_space_maximized.png) |
+| *Dropzone model yükleyici, BatchNorm katlama, Q8.8 niceleme, DSP48 kullanım barı ve EKG eğrisi.* | *Büyütülebilir SQNR (dB) vs. LUT trade-off eğrisi, 30 dB hedefi ve tek tıkla format seçimi.* |
+
+| 7. Tam Ekran Biyosinyal & Anomali Çıkış İnceleme |
+| :---: |
+| [![Biosignal Waveform Maximized](samples/07_biosignal_anomaly_waveform_maximized.png)](samples/07_biosignal_anomaly_waveform_maximized.png) |
+| *Float32 EKG referans sinyali, bit-doğru RTL çıkışı ve 45. milisaniyedeki patolojik aritmi / spike tespiti.* |
 
 </div>
 
@@ -28,11 +58,11 @@
 
 **CircuitVR**, donanım, FPGA ve Edge AI mühendislerinin devasa boyutlu (50+ GB) kurumsal FPGA/ASIC araçlarını açmadan; **SystemVerilog (`.sv`, `.svh`)**, **Verilog (`.v`, `.vh`)** ve **VHDL (`.vhd`, `.vhdl`)** projelerini saniyeler içinde:
 1. **Kodlayabildiği** (canlı hata/uyarı işaretlemeli Monaco editörü, otomatik SHA-1 dosya izleyicisi, **`Ctrl+K` Global Komut Paleti** ve **İnteraktif Tanıtım Turu**),
-2. **Sentezleyip Kapı Seviyesi Şematiğini, Kritik Yolu ve Tahmini $F_{\max}$ Değerini İnceleyebildiği** (Yosys + ELKjs ortogonal yerleştirme + **Kırmızı Kritik Yol Vurgulama** + **Fan-In / Fan-Out Etki Konisi**),
-3. **Testbench ile Simüle Edip VCD + Analog Dalga Formunu Analiz Edebildiği** (Icarus Verilog + **İkili İmleç `Marker A / B` ($\Delta t$, $\text{MHz}$)**, **Analog Biyosinyal Çizimi**, **SIGNED 2'ye Tümleyen Radix**, **Saat Frekansı/Duty-Cycle Ölçümü** ve **`X/Z` Belirsiz Durum Kök-Neden Tablosu**),
+2. **Sentezleyip Kapı Seviyesi Şematiğini, Kritik Yolu ve Tahmini $F_{\max}$ Değerini İnceleyebildiği** (Yosys + ELKjs ortogonal yerleştirme + **Yüzen Kontrol Çubuğu** + **Akıllı Hücre Port Tooltip'i** + **Kırmızı Kritik Yol Vurgulama** + **Fan-In / Fan-Out Etki Konisi**),
+3. **Testbench ile Simüle Edip VCD + Analog Dalga Formunu Analiz Edebildiği** (Icarus Verilog + **Canlı Ölçüm HUD Paneli ($\Delta t$, $\text{MHz}$)**, **Sinyal Arama/Filtreleme Barı**, **Çift Tık Radix Seçici**, **Analog Biyosinyal Çizimi**, **SIGNED 2'ye Tümleyen Radix** ve **`X/Z` Belirsiz Durum Kök-Neden Tablosu**),
 4. **Tek Tıkla RTL Auto-Fix, Diff Önizleme ve Donanım Güvenlik Denetiminden (`SecLinter`) Geçirebildiği** (`0–100` Optimizasyon Skoru + **Diff Önizleme Modalı** + **10 Kademeli Geri Al (`Undo`)** + **`// circuitvr-ignore`** + **CDC / Kombinasyonel Döngü / Nadir Tetiklenen Trojan Denetimi**),
-5. **Otomatik FSM Durum Diyagramı Çıkarabildiği** (SV/Verilog/VHDL durum makinelerini, geçiş koşullarını ve ulaşılamayan **Ölü / Trojan Durumları** interaktif SVG diyagram olarak çizen `fsm_service.py`),
-6. **Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu (`Edge AI Lab`)** ile Python'da üretilen **`.pkl` / `.pickle` (Güvenli Kısıtlı Unpickler), `.npy`, `.npz`, PyTorch `.pt` / `.pth`, `.json`, `.csv`, `.coe`, `.mem`** modellerini doğrudan içeri aktarıp; **PyTorch `BatchNorm1d` Katlama (`Fold into Conv1D`)**, **RNE (Round-Half-to-Even) Niceleme**, **Doyma (`Saturate`) vs. Taşma (`Wrap`)** karşılaştırması, **Pareto (`SQNR dB vs. LUT`) Grafiği**, **3 Farklı Donanım Mimarisi (`Parallel MAC`, `BRAM ROM .mem/.coe`, `Folded Time-Multiplexed MAC`)** ve **64 örneklik bit-doğru (bit-exact) ECG/EEG Golden Testbench + RTL hızlandırıcısını** tek tıkla üretebildiği
+5. **Çift Yönlü FSM Durum Diyagramı ile Kodu Birbirine Bağlayabildiği** (SVG durum dairesine veya geçiş okuna tıklandığında Monaco editöründeki ilgili satıra otomatik odaklanan ve parlayan **Two-Way Highlight** motoru),
+6. **Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu (`Edge AI Lab`)** ile Python'da üretilen **`.pkl` / `.pickle` (Güvenli Kısıtlı Unpickler), `.npy`, `.npz`, PyTorch `.pt` / `.pth`, `.json`, `.csv`, `.coe`, `.mem`** modellerini belirgin bir **Dropzone** üzerinden içeri aktarıp; **PyTorch `BatchNorm1d` Katlama (`Fold into Conv1D`)**, **RNE Niceleme**, **Doyma (`Saturate`) vs. Taşma (`Wrap`)**, **Pareto (`SQNR dB vs. LUT`) Grafiği**, **DSP48 Dilim Kullanım İlerleme Çubuğu**, **Tam Ekran (Maximize) Modalları** ve **bit-doğru (bit-exact) ECG/EEG Golden Testbench + RTL hızlandırıcısını** tek tıkla üretebildiği
 
 modern, karanlık temalı (Dark Mode & Glassmorphism) ve **Dual-Runtime (Yerel Tam EDA + Vercel Serverless Bulut)** destekli bir donanım IDEsidir.
 
@@ -43,19 +73,19 @@ modern, karanlık temalı (Dark Mode & Glassmorphism) ve **Dual-Runtime (Yerel T
 ```mermaid
 flowchart LR
     subgraph UI["🎨 Frontend (React 18 + TS + Tailwind + React Flow)"]
-        W["Karşılama & Klasör Yükleyici\n(Drag & Drop / Yerinde Aç / Tur)"]
-        E["Çoklu-HDL Kod Editörü\n(.sv / .v / .vhd + Ctrl+K + TR/EN)"]
-        S["ELKjs Şematik + Kritik Yol (Fmax)\n+ Fan-In / Fan-Out Konisi"]
-        V["HTML5 Canvas Waveform\n(Marker A/B + Analog + SIGNED + X/Z)"]
-        A["RTL Optimizasyon + Auto-Fix Diff\n+ SecLinter + Otomatik FSM Grafiği"]
-        AI["Edge AI & Biyosinyal Lab\n(.pkl/.npy/.pt + BN Fold + Pareto + .coe)"]
+        W["Karşılama & Dropzone Yükleyici\n(Drag & Drop / Yerinde Aç / Tur)"]
+        E["Çoklu-HDL Kod Editörü\n(.sv / .v / .vhd + Ctrl+K + Satır Vurgulama)"]
+        S["ELKjs Şematik + Yüzen Toolbar\n+ Kritik Yol + Port Tooltip'i"]
+        V["HTML5 Canvas Waveform\n(Ölçüm HUD + Sinyal Arama + Radix Seçici)"]
+        A["RTL Optimizasyon + Çift Yönlü FSM\n(onStateClick ➔ Monaco Odaklanma)"]
+        AI["Edge AI Studio (3-Kart & Dropzone)\n(.pkl/.npy/.pt/.mem + Pareto + Maximize Modal)"]
     end
 
     subgraph API["⚙️ FastAPI Backend (Python)"]
         WS["Workspace & Hiyerarşi\nTarayıcı (workspace_service)"]
         VH["VHDL ➔ SV Sentez Köprüsü\n(vhdl_service)"]
         OP["Optimizasyon + Auto-Fix + SecLinter\n(optimizer_service)"]
-        FS["Otomatik FSM & Trojan Çıkarıcı\n(fsm_service)"]
+        FS["Evrensel FSM & Trojan Çıkarıcı\n(fsm_service)"]
         EA["Edge AI Sentez, Unpickler & Co-Sim\n(edge_ai_service)"]
         IN["Otomatik Araç Kurucu\n(installer_service)"]
     end
@@ -107,40 +137,42 @@ docker-compose up --build -d
 
 ---
 
-## 🔍 2. Temel Modüller ve Tüm İşlevler (V 2.16 Envanteri)
+## 🔍 2. Temel Modüller ve Tüm İşlevler (V 2.16 DX Envanteri)
 
 ### 📂 A) Esnek Proje & Dosya Yönetimi (`rtl/` + `tb/`) + İnteraktif Tur & Komut Paleti
 * **Sürükle-Bırak (Drag & Drop) ve Klasör Yükleme:** Proje klasörünüzü veya tekil `.sv`, `.v`, `.vhd`, `.vhdl` dosyalarınızı doğrudan karşılama ekranına sürükleyip bırakabilirsiniz. Dosyalar otomatik olarak `rtl/` (tasarım) ve `tb/` (testbench) gruplarına ayrılır.
 * **Yerinde Klasör Açma (In-Place Workspace):** Bilgisayarınızdaki mevcut bir klasörü kopyalamadan doğrudan yerinde açar. Harici bir editörde (ör. VS Code veya Vivado) dosyayı değiştirdiğinizde **SHA-1 parmak izi izleyicisi** değişikliği 2 saniye içinde algılar ve projeyi canlı günceller.
 * **Otomatik Hiyerarşi ve Top Modül Tespiti:** Modül ve VHDL `entity`/`architecture` örneklemelerini (`port map` dahil) tarayarak en üst tasarım modülünü (`Top`) ve testbench modülünü (`TB`) otomatik seçer.
 * **`Ctrl + K` Global Komut Paleti (`CommandPalette`):** Klavyeden `Ctrl+K` (veya `Cmd+K`) ile tüm aksiyonlara (Simülasyon, Şematik, Lint, Analiz, Edge AI Lab, Dil Değiştirme) ve proje dosyalarına anında bulanık arama (fuzzy search) ile erişim sağlar.
-* **7 Adımlı İnteraktif Tanıtım Turu (`OnboardingTour`):** Siteye ilk kez giren kullanıcılara arayüzdeki tüm işlevleri adım adım tanıtır; *"Bir daha gösterme"* seçeneği ve üst bardaki **Tanıtım Modu (`?`)** butonu ile her zaman yeniden başlatılabilir.
+* **Akıllı TopBar Durum Çipleri & Bulut Fallback:** Araçların yerel PATH'te bulunup bulunmadığını `(Yerel)` ve `(Bulut)` rozetleriyle anında gösterir. Araç bulunamadığında Vercel Serverless bulut motoru otomatik olarak devreye girer.
 
-### 📐 B) Gerçek Yosys Sentez Şematiği, Kritik Yol ($F_{\max}$) & Fan-In/Fan-Out Konisi (`SchematicViewer`)
+### 📐 B) Yosys Sentez Şematiği, Yüzen Toolbar & Akıllı Hücre Port Tooltip'i (`SchematicViewer`)
 * Tasarımınızı Yosys ile gerçek bir kapı/hücre netlist'ine dönüştürür ve **ELKjs** ortogonal yönlendirme algoritmasıyla çizer.
-* **DAG Kritik Yol (Critical Path) ve Tahmini $F_{\max}$ Analizi:** Şematik grafiği üzerinde ardışıl elemanlar (`$dff`) arasındaki en uzun kombinasyonel mantık derinliğini (`logic_depth`) hesaplar, **tahmini maksimum saat frekansını ($F_{\max}$ MHz)** ve darboğaz yolunu (ör. `in ➔ $add ➔ $mux ➔ out`) üst barda gösterir. **🔥 Kritik Yol** butonuyla en yavaş sinyal yolundaki düğüm ve kablolar kırmızı parıltıyla vurgulanır.
-* **Fan-In (Sürücü) / Fan-Out (Alıcı) Etki Konisi:** Şematikte herhangi bir kapıya veya flip-flop'a tıkladığınızda o hücreyi süren tüm kaynakları (**Fan-In**) ve o hücrenin sürdüğü tüm hedefleri (**Fan-Out**) izole ederek geri kalan devreyi karartır.
-* **Renk Kodlu Donanım Hücreleri & Flatten Seçeneği:** Giriş/çıkış portları (`port_in`/`port_out`), çoklayıcılar (`$mux`/`$pmux`), Flip-Flop'lar (`$dff`/`$adff`/`$sdff`), aritmetik kapılar (`$add`/`$sub`/`$and`/`$xor`) ve alt modülleri renk kodlu gösterir; tek tuşla hiyerarşiyi kapı seviyesinde düzleştirir (`Flatten`).
+* **Yüzen Cam Kontrol Çubuğu (Floating Toolbar):** Tuvalin sağ üst köşesinde konumlanan cam kontrol çubuğu ile `Zoom In (+)` , `Zoom Out (-)`, `Fit View (Sığdır)` ve `Download SVG (Vektörel Şematik İndir)` eylemleri akıcı biçimde gerçekleştirilir.
+* **Akıllı Hücre Bilgi Kartı (Cell Tooltip):** Fareyle herhangi bir mantık kapısının (`$add`, `$mux`, `$dff`, `$pmux`) üzerine gelindiğinde, hücrenin gerçek giriş/çıkış pin genişliklerini (ör. `A [1:0]`, `B [1:0]`, `Y [1:0]`) ve parametrelerini gecikmesiz gösterir.
+* **DAG Kritik Yol ve Tahmini $F_{\max}$ Analizi:** Flip-Flop'lar arasındaki en uzun kombinasyonel mantık derinliğini (`logic_depth`) hesaplar, **tahmini maksimum saat frekansını ($F_{\max}$ MHz)** ve darboğaz yolunu gösterir. **🔥 Kritik Yol** butonuyla en yavaş hat kırmızı parıltıyla aydınlatılır.
+* **Fan-In / Fan-Out Etki Konisi:** Tıklanan hücreyi süren (**Fan-In**) ve o hücrenin sürdüğü (**Fan-Out**) tüm sinyalleri izole ederek devrenin geri kalanını karartır.
 
-### 📈 C) Tek Tık Simülasyon, İkili İmleç ($\Delta t$), Analog Mod & `X/Z` Kök-Neden Analizi (`WaveformViewer`)
-* Testbench dosyanızda `$dumpfile` veya `$dumpvars` yazmayı unutmuş olsanız bile CircuitVR arka planda otomatik bir VCD yakalayıcı (`__cvr_dump.sv`) enjekte eder ve sonsuz döngüleri önlemek için ayarlanabilir maksimum simülasyon süresi (`Maks ns`) uygular.
-* **İkili Zaman İmleci (`Marker A` & `Marker B`):** Sol tık ile `Marker A` (Sarı), `Shift + Sol Tık` ile `Marker B` (Camgöbeği) yerleştirerek iki olay arasındaki **$\Delta t$ (ns) zaman farkını** ve **karşılık gelen frekansı ($\text{MHz}$)** canlı ölçer.
-* **SIGNED (2'ye Tümleyen) Radix & Analog Dalga Çizimi:** Sabit noktalı ($Qm.n$) DSP ve Edge AI filtre çıkışlarını **SIGNED (İşaretli Tam Sayı)** tabanında okur ve **Analog Mod** açıldığında çok-bitli veri yollarını sürekli analog biyosinyal eğrisi olarak çizer.
-* **Otomatik Saat (Clock) Ölçümü & `X/Z` Belirsiz Durum Kök-Neden Tablosu:** Seçili sinyalin kenar geçiş sayısını, ortalama periyodunu, frekansını ($\text{MHz}$) ve doluluk oranını (`Duty Cycle %`) hesaplar; simülasyonda tanımsız (`x`) veya yüksek empedans (`z`) oluşan ilk zaman damgasını (`ns`) tespit edip tek tıkla imleci o hataya odaklar.
+### 📈 C) Simülasyon, Ölçüm HUD Paneli, Sinyal Arama & Radix Menüsü (`WaveformViewer`)
+* Testbench dosyanızda `$dumpfile` veya `$dumpvars` yazmayı unutmuş olsanız bile CircuitVR arka planda otomatik bir VCD yakalayıcı (`__cvr_dump.sv`) enjekte eder.
+* **Canlı Ölçüm HUD Paneli (Measurement HUD Pill):** Üst kontrol çubuğunda aktif `Marker A` ($t_A$) ve `Marker B` ($t_B$) değerlerini, zaman farkını ($\Delta t$) ve hesaplanan frekansı ($f$ MHz) canlı gösterir.
+* **Sinyal Arama & Filtreleme Barı (`🔍 Sinyal Ara...`):** Çok sayıda sinyalin bulunduğu karmaşık tasarımlarda aranan sinyali harf harf filtreleyerek hem isim listesini hem de tuvaldeki dalga çizgilerini senkronize olarak izole eder.
+* **Hızlı Radix Değiştirme Menüsü:** Sinyal etiketine çift tıklandığında veya radix rozetine tıklandığında açılan menü ile veri tabanı (`HEX`, `DEC`, `SIGNED`, `BIN`) saniyeler içinde değiştirilir.
+* **SIGNED 2'ye Tümleyen & Analog Mod:** Sabit noktalı ($Qm.n$) filtre ve Edge AI çıkışlarını negatif/pozitif işaretli okur ve sürekli analog biyosinyal eğrisi olarak çizer.
 
 ### 🛡️ D) Çift Katmanlı Lint ve Yapısal Ön-Denetim (`Verilator` + `AST`)
-* Derleyiciye gitmeden önce kendi yapısal analizcimiz eksik `endmodule` / `end entity` hatalarını ve projede bulunmayan alt modül çağrılarını (`MODNOTFOUND`) Türkçe/İngilizce açıklamalarla yakalar.
+* Derleyiciye gitmeden önce yapısal analizcimiz eksik `endmodule` / `end entity` hatalarını ve tanımsız modül çağrılarını yakalar.
 * Ardından **Verilator** (veya yedek olarak **Icarus Verilog**) ile tam IEEE 1800-2012 lint denetimi çalıştırır.
-* Alt paneldeki veya Analiz sekmesindeki herhangi bir hataya tıkladığınızda editör doğrudan ilgili dosya ve satıra (`file:line`) odaklanır.
+* Analiz panelindeki herhangi bir hataya tıklandığında editör doğrudan ilgili satıra (`file:line`) odaklanır.
 
-### 🧠 E) Akıllı RTL Optimizasyon Danışmanı, Tek-Tık Auto-Fix & Donanım Güvenlik Denetçisi (`SecLinter` + `FSM`)
-Analiz sekmesinde kodunuzu hem **Statik AST Örüntü Analizi** hem de **Yosys Sentez Netlist (`stat` + `ltp`)** çıktılarıyla inceleyerek `0–100` arasında bir **Optimizasyon Skoru** verir:
-* **Tek Tıkla Otomatik Düzelt (`Auto-Fix`) + Diff Önizleme + Geri Al (`Undo`) + Kural Bastırma (`Ignore`):**
-  * **Diff Önizle & Uygula:** Kodu değiştirmeden önce yan yana kırmızı/yeşil satır farklarını (`Diff Preview Modal`) gösterir.
-  * **Geri Al (`Undo`):** Bellekte 10 kademeli anlık görüntü (snapshot) tutarak yapılan otomatik düzeltmeleri tek tıkla geri alır.
-  * **Bu Kuralı Bastır (`// circuitvr-ignore <RULE_ID>`):** Bilinçli tasarım tercihlerini (ör. bilerek kullanılan latch) tek tıkla yorum satırı direktifiyle susturur.
-* **Otomatik FSM Çıkarımı ve İnteraktif Durum Diyagramı (`fsm_service.py`):** SystemVerilog, Verilog ve VHDL dosyalarındaki sonlu durum makinelerini (`enum`, `localparam`, `type state_type is (...)`), geçiş koşullarını ve başlangıç (`reset`) durumunu otomatik çıkarıp **SVG Durum Diyagramı** olarak çizer; ulaşılamayan (**Dead / Trojan State**) durumları kırmızı güvenlik uyarısıyla işaretler.
-* **Donanım Güvenliği (`SecLinter`) ve CDC Kontrolleri:**
+### 🧠 E) Akıllı Optimizasyon Danışmanı, Çift Yönlü FSM & Donanım Güvenliği (`SecLinter` + `FSM`)
+* **Çift Yönlü Durum Diyagramı & Editör Bağlantısı (Two-Way Highlight):**
+  * FSM SVG diyagramındaki herhangi bir durum dairesine veya geçiş okuna tıklandığında sol taraftaki Monaco kod editörü ilgili durumun koddaki tanımlandığı satıra (`case(state)`, `localparam`, `S_IDLE:`) otomatik kaydırılır.
+  * İlgili satır parlak gök mavisi neon ışık efektiyle (`bg-sky-500/25 border-l-2 border-sky-400 animate-pulse`) vurgulanır.
+  * Durum Geçiş Tablosundaki bir satırın üzerine gelindiğinde diyagramdaki ok parlar; diyagramdaki okun üzerine gelindiğinde tablodaki satır aydınlanır.
+* **Tek Tıkla Auto-Fix, Diff Önizleme & Geri Al (Undo):**
+  * Kod değiştirilmeden önce yan yana diff önizlemesi sunulur, 10 kademeli geri alma (`Undo`) geçmişi tutulur ve istenen satırlar `// circuitvr-ignore` direktifiyle bastırılabilir.
+* **Donanım Güvenlik Kuralları Envanteri:**
 
 | Kural Kodu | Kategori | Tespit Edilen Anti-Pattern / Güvenlik Riski | Otomatik / Önerilen Donanım Çözümü |
 | :--- | :--- | :--- | :--- |
@@ -155,22 +187,21 @@ Analiz sekmesinde kodunuzu hem **Statik AST Örüntü Analizi** hem de **Yosys S
 | **`OPT-VHDL-STD`** | **VHDL IEEE Standartları** | Standart dışı `std_logic_unsigned`, `clk'event`, sınırsız `integer` | `ieee.numeric_std.all`, `rising_edge(clk)` (**Auto-Fix**) |
 
 ### 🧬 F) Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu (`Edge AI Lab`)
-Python'da (`PyTorch` / `NumPy` / `Scikit-Learn`) eğitilen 1D-CNN veya sayısal filtre modellerini doğrudan FPGA RTL donanımına taşırken uçtan uca bir tasarım akışı sunar:
-* **Doğrudan Python Model İçe Aktarma (`.pkl`, `.npy`, `.npz`, `.pt`, `.json`, `.csv`, `.coe`, `.mem`):**
-  * Güvenlik odaklı **`_RestrictedModelUnpickler`** ile rastgele kod çalıştırma (`RCE`) riski olmadan Python `pickle` (`.pkl`), NumPy (`.npy`/`.npz`) ve PyTorch `state_dict` (`.pt`/`.pth`) dosyalarından `weights`, `bias`, `bn_gamma`, `bn_beta`, `bn_mean`, `bn_var` ve test sinyallerini otomatik ayıklar.
-  * Ayrıca PyTorch/Sklearn modellerini tek komutla dışa aktaran hazır **`export_to_circuitvr.py`** yardımcı betiğini tek tıkla indirmenizi sağlar.
-* **PyTorch / Keras `BatchNorm1d` Katlama Motoru (`Fold into Conv1D`):**
-  * Donanımda ekstra çarpıcı/bölen harcamamak için BatchNorm katmanını ağırlık ve bias içine matematiksel olarak katlar:
-    $$w_{\text{folded}} = w \cdot \frac{\gamma}{\sqrt{\sigma^2 + \epsilon}}, \qquad b_{\text{folded}} = (b - \mu)\cdot \frac{\gamma}{\sqrt{\sigma^2 + \epsilon}} + \beta$$
-* **Gelişmiş Sabit Nokta ($Qm.n$) Niceleme, `RNE` & Taşma (`Saturate` vs `Wrap`) Analizi:**
-  * **3 Yuvarlama Modu:** `Round-to-Nearest`, **`RNE` (Convergent / Round-Half-to-Even — DSP/FPGA altın standardı)** ve `Truncate`.
-  * **2 Taşma (Overflow) Modu:** **Doyma (`Saturate` — Sınırda Kırpma)** ve **2'ye Tümleyen Sarmalama (`Wrap-Around`)** davranışlarını simüle eder; sarmalama kaynaklı faz terslenmelerini ve kaç örneğin doyuma ulaştığını (`saturation_count`) raporlar.
-* **İnteraktif Pareto (`SQNR dB vs. LUT`) Dağılım Grafiği ve Auto-Tune:** 7 farklı $Qm.n$ bit genişliği adayını (`Q1.5` ➔ `Q4.12`) tarayarak doğruluk (`SQNR dB`) ve donanım maliyeti (`Tahmini LUT`) eğrisini SVG grafik olarak çizer; hedef SQNR değerini sağlayan en düşük maliyetli Pareto-optimal noktayı önerir.
-* **3 Sentezlenebilir RTL Mimari Modu ve `.mem` / `.coe` Bellek Çıktıları:**
-  1. **`Parallel Pipelined MAC Tree`:** Her saat darbesinde 1 çıktı (`II=1`) üreten tam paralel mimari.
-  2. **`BRAM / LUTROM Tabanlı (`$readmemh`)`:** Ağırlıkları `.mem` veya Xilinx Vivado Block Memory Generator `.coe` dosyalarından okuyan ROM mimarisi (**`weights_qmn.mem`** ve **`weights_qmn.coe`** tek tıkla indirilebilir).
-  3. **`Folded Time-Multiplexed Tek-MAC FSM`:** Çok kanallı biyosinyallerde (ör. 32 kanal EEG) yalnızca **1 adet DSP48/Çarpıcı** kullanarak $K$ saat darbesinde konvolüsyonu tamamlayan ultra düşük alanlı FSM mimarisi.
-* **İki Çalışma Modu:** İster hazır ECG/EEG/FIR şablonlarıyla sıfırdan RTL + TB sentezleyin (`Mod 1`), ister projenizdeki mevcut `.sv/.v/.vhd` dosyanızı algılatıp kendi RTL dosyanıza dokunmadan yalnızca ona özel **Bit-Exact Golden Testbench** üretin (`Mod 2`).
+Python'da (`PyTorch` / `NumPy` / `Scikit-Learn`) eğitilen yapay zeka modellerini doğrudan FPGA donanımına taşıyan tam teşekküllü stüdyo:
+* **Gelişmiş Dropzone Dosya Yükleyici:**
+  * Kesikli kenarlıklı sürükle-bırak Dropzone alanı; `.pkl`, `.pt`, `.npy`, `.npz`, `.json`, `.csv`, `.coe`, `.mem` dosyalarını güvenli unpickler ile anında ayrıştırır ve yüklenen dosyanın adını/boyutunu durum çipi olarak gösterir.
+  * **Hex `.mem` Bellek Sinyal Otomatik Ölçekleyici:** 16-bit işaretli Hex bellek dökümlerini (ör. `ecg_anomaly.mem`) Q8.8 formatından float uzayına dönüştürerek 100 örneklik EKG aritmi/anomali sinyali olarak tanır.
+* **Genişletilmiş 3-Kart İş İstasyonu Düzeni & Sekme Çubuğu:**
+  * Dar sütunlar yerine `[Geniş Görünüm]`, `[1. Model & BatchNorm]`, `[2. Qm.n & Pareto]`, `[3. Donanım & RTL]` pill sekmeleriyle ferah bir çalışma alanı sunar.
+  * **1. Model & BatchNorm:** PyTorch BatchNorm1d katlama motoru, hazır biyomedikal şablonlar (ECG QRS, EEG Spike, FIR Denoise) ve Float32 ağırlık girişleri.
+  * **2. Sabit Nokta & Pareto:** Tam sayı ($m$) ve kesir ($n$) bit slider'ları, RNE yuvarlama, Saturate/Wrap taşma seçicileri ve Pareto SQNR vs LUT eğrisi.
+  * **3. Donanım Roofline & DSP48 Kullanım Barı:** Gecikme ($ns$), GOPS ve FPGA'deki DSP dilimlerinin durumunu gösteren `0 / 8 DSP Blocks` görsel ilerleme çubuğu.
+* **Tam Ekran (Maximize) Modalları:**
+  * Hem **Pareto Eğrisi** hem de **Biyosinyal & Anomali Çıkış Grafikleri** için sağ üstte büyütme butonu yer alır; tıklandığında yüksek çözünürlüklü modal açılarak tüm veri noktaları ve spike tetikleyicileri derinlemesine incelenebilir.
+* **3 Sentezlenebilir RTL Mimarisi:**
+  1. `Parallel Pipelined MAC Tree` (II=1 tek çevrimlik paralel çarpıcı ağacı),
+  2. `BRAM / LUTROM ($readmemh)` (Ağırlıkları `.mem` veya Vivado `.coe` dosyasından okuyan mimari),
+  3. `Folded Time-Multiplexed MAC` (Tek bir DSP48 kullanarak N çevrimde çalışan ultra düşük alanlı FSM).
 
 ---
 
@@ -223,9 +254,11 @@ circuit_vr/
 │   │   ├── i18n.tsx                  # Türkçe (TR) & İngilizce (EN) anlık dil sistemi
 │   │   └── version.ts                # Canlı arayüz doğrulama sürüm rozeti (V 2.16)
 │   └── index.html
+├── samples/                          # Canlı EKG 1D-CNN projesinden alınmış yüksek çözünürlüklü arayüz ekran görüntüleri (01–07)
 ├── examples/
 │   ├── counter_demo/                 # SystemVerilog hiyerarşik sayaç + top_demo örneği
 │   └── vhdl_alu_demo/                # VHDL 8-bit ALU + Testbench örneği
+├── take_samples.py                   # Otomatik ekran görüntüsü alma betiği (Playwright + Chrome)
 ├── setup.bat / setup.sh              # Tek tıkla tam otomatik kurulum sihirbazı
 ├── run_local.bat                     # Hızlı yerel başlatıcı (Windows)
 └── vercel.json                       # Vercel dağıtım yapılandırması
@@ -237,16 +270,16 @@ circuit_vr/
 
 ## 🌟 Overview
 
-**CircuitVR (V 2.16)** is a dark-mode hardware design, hardware security & Edge AI co-design studio for **SystemVerilog (`.sv`)**, **Verilog (`.v`)**, and **VHDL (`.vhd`)** engineers. It combines:
-* **Real Yosys Gate-Level Schematics** with orthogonal **ELKjs** layout, **DAG Critical Path & Estimated $F_{\max}$** highlighting, and interactive **Fan-In / Fan-Out Cone** tracing,
-* **One-Click Simulation & HTML5 Canvas VCD Waveform Viewer** powered by **Icarus Verilog (`iverilog` + `vvp`)** with **Dual Cursors (`Marker A & B`, $\Delta t$, MHz)**, **Analog Biosignal Mode**, **SIGNED Two's Complement Radix**, and an **`X/Z` Unknown Root-Cause Inspector**,
-* **Smart RTL Optimization Advisor & Hardware Security Linter (`SecLinter`)** with **One-Click Auto-Fix**, **Side-by-Side Diff Preview Modal**, **10-Step Undo**, **`// circuitvr-ignore` directives**, **CDC checks**, and **Automatic Interactive SVG FSM State Diagrams** with Dead/Trojan state detection,
-* **Edge AI & Biosignal (1D-CNN / DSP) Co-Design Studio (`Edge AI Lab`)** that directly imports Python **`.pkl`, `.npy`, `.npz`, PyTorch `.pt`, `.json`, `.csv`, `.coe`, `.mem`** models via a safe restricted unpickler, folds **PyTorch `BatchNorm1d`** layers into Conv1D weights, compares **RNE rounding** & **Saturation vs. Wrap-Around** overflow, plots the **Pareto (`SQNR dB vs. LUT`) frontier**, exports **`.mem` / Xilinx `.coe`** files, and synthesizes **3 selectable hardware architectures** + **64-sample Bit-Exact Golden ECG/EEG Testbenches**,
-* **Global Command Palette (`Ctrl+K`)**, **Interactive Onboarding Tour**, and **Instant TR / EN Language Toggle**.
+**CircuitVR (V 2.16)** is a modern dark-mode hardware design, hardware security & Edge AI co-design studio for **SystemVerilog (`.sv`)**, **Verilog (`.v`)**, and **VHDL (`.vhd`)** engineers. It combines:
+* **Interactive Yosys Gate-Level Schematics** with orthogonal **ELKjs** routing, **Floating Toolbar** (`Zoom/Fit/SVG Export`), **Cell Port Tooltips** (`A [1:0]`, `B [1:0]`), and **DAG Critical Path & Estimated $F_{\max}$** calculation,
+* **Simulation & HTML5 Canvas VCD Waveform Viewer** powered by **Icarus Verilog (`iverilog` + `vvp`)** with **Live Measurement HUD Pill** ($\Delta t$, MHz), **Signal Search & Filter Bar**, **Double-Click Radix Dropdown**, and an **`X/Z` Unknown Root-Cause Inspector**,
+* **Two-Way Connected FSM State Diagram & Code Editor**: Clicking on any state node or transition arrow automatically jumps and scrolls Monaco editor to the exact line with an animated glowing pulse highlight,
+* **Smart RTL Optimization Advisor & Hardware Security Linter (`SecLinter`)** with **One-Click Auto-Fix**, **Side-by-Side Diff Preview Modal**, **10-Step Undo**, **`// circuitvr-ignore` directives**, and **CDC checks**,
+* **Modernized Edge AI & Biosignal (1D-CNN / DSP) Co-Design Studio (`Edge AI Lab`)** featuring a **Drag-and-Drop Dropzone** (`.pkl, .npy, .npz, .pt, .json, .csv, .coe, .mem`), **3-Card Tabbed Layout**, **PyTorch BatchNorm1d Folding**, **RNE rounding & Saturation vs. Wrap-Around overflow**, **DSP48 Slice Usage Progress Bar**, and **Full-Screen Maximize Modals** for both the Pareto Curve and Biosignal Waveforms.
 
 ## ⚡ Quick Start (Zero Manual Setup)
 
-Cloning from GitHub automatically provisions Python packages, Node modules, and missing EDA binaries (`yosys`, `iverilog`, `vvp`, `verilator`):
+Cloning from GitHub automatically provisions Python packages, Node modules, and portable EDA binaries (`yosys`, `iverilog`, `vvp`, `verilator`):
 
 ```bash
 # Windows
@@ -255,8 +288,6 @@ setup.bat
 # Linux / macOS
 chmod +x setup.sh auto.sh && ./setup.sh
 ```
-
-Once started, open **`http://localhost:3000`** in your browser.
 
 ---
 

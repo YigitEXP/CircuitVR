@@ -102,11 +102,20 @@ export default function CodeEditor({ file, content, dirty, gotoLine, gotoNonce, 
           <div ref={overlayRef}>
             {Array.from({ length: lineCount }, (_, i) => {
               const sev = marks.get(i + 1);
+              const isGoto = gotoLine === i + 1;
               return (
                 <div
                   key={i}
                   style={lineStyle}
-                  className={sev === 'error' ? 'bg-red-500/15' : sev === 'warning' ? 'bg-yellow-500/10' : ''}
+                  className={
+                    isGoto
+                      ? 'bg-sky-500/25 border-l-2 border-sky-400'
+                      : sev === 'error'
+                      ? 'bg-red-500/15'
+                      : sev === 'warning'
+                      ? 'bg-yellow-500/10'
+                      : ''
+                  }
                 />
               );
             })}

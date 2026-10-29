@@ -11,10 +11,11 @@ import ReactFlow, {
   useEdgesState,
   ReactFlowProvider,
   NodeProps,
+  useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
-import { Zap } from 'lucide-react';
+import { Zap, ZoomIn, ZoomOut, Maximize2, Download } from 'lucide-react';
 import { SchematicGraph, SchematicNode } from '../types';
 import { useI18n } from '../i18n';
 
@@ -85,9 +86,35 @@ const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean; critical
         borderRadius: 6, background: '#0f172a', opacity: data.dim ? 0.25 : 1,
         boxShadow,
       }}
-      className="text-white shadow-lg"
-      title={`${n.type}\n${Object.entries(n.params).map(([k, v]) => `${k}=${v}`).join('\n')}`}
+      className="text-white shadow-lg relative group/node"
     >
+      {/* Floating Smart Tooltip on Hover */}
+      <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-50 p-2.5 rounded-lg border border-slate-700 bg-slate-950/95 shadow-2xl opacity-0 group-hover/node:opacity-100 pointer-events-none transition-all duration-150 min-w-[210px] text-[11px] font-mono space-y-1">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+          <span className="font-bold text-sky-400">{n.typeLabel || n.label}</span>
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{n.type}</span>
+        </div>
+        <div className="text-[10px] text-slate-300 space-y-0.5">
+          {ins.length > 0 && (
+            <div>
+              <span className="text-slate-500">Giriş: </span>
+              <span className="text-emerald-300">{ins.map(p => `${p.name}[${p.width}b]`).join(', ')}</span>
+            </div>
+          )}
+          {outs.length > 0 && (
+            <div>
+              <span className="text-slate-500">Çıkış: </span>
+              <span className="text-amber-300">{outs.map(p => `${p.name}[${p.width}b]`).join(', ')}</span>
+            </div>
+          )}
+          {Object.keys(n.params).length > 0 && (
+            <div className="text-slate-400 border-t border-slate-900 pt-0.5 text-[9px]">
+              {Object.entries(n.params).map(([k, v]) => `${k}=${v}`).join(', ')}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div
         style={{ height: HEADER_H, background: data.critical ? '#881337' : colors.header }}
         className="px-2 flex items-center justify-between text-xs font-semibold rounded-t-sm"
@@ -162,6 +189,7 @@ interface Props {
 const Inner: React.FC<Props> = ({ graph }) => {
   const { lang } = useI18n();
   const isTr = lang === 'tr';
+  const { zoomIn, zoomOut, fitView } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNet, setSelectedNet] = useState<string | null>(null);
@@ -169,6 +197,28 @@ const Inner: React.FC<Props> = ({ graph }) => {
   const [showCritical, setShowCritical] = useState(false);
   const [query, setQuery] = useState('');
   const [layouting, setLayouting] = useState(false);
+
+  const downloadSvg = useCallback(() => {
+    const svgEl = document.querySelector('.react-flow__edges');
+    const nodesEl = document.querySelector('.react-flow__nodes');
+    if (!svgEl) return;
+    const content = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1000" viewBox="0 0 1800 1000" style="background:#0b1220">
+  <style>
+    text { font-family: monospace; fill: #ffffff; }
+  </style>
+  <rect width="1800" height="1000" fill="#0b1220"/>
+  ${svgEl.outerHTML}
+  ${nodesEl ? `<g transform="translate(10, 10)">${nodesEl.outerHTML}</g>` : ''}
+</svg>`;
+    const blob = new Blob([content], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${graph.module || 'circuit'}_schematic.svg`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [graph.module]);
 
   const critNodeSet = useMemo(() => new Set(graph.critical_path?.nodes ?? []), [graph]);
   const critEdgeSet = useMemo(() => new Set(graph.critical_path?.edges ?? []), [graph]);
@@ -327,6 +377,44 @@ const Inner: React.FC<Props> = ({ graph }) => {
       </div>
 
       <div className="card relative" style={{ height: 640, padding: 0 }}>
+        {/* Floating Interactive Toolbar */}
+        <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 p-1 rounded-xl glass-strong border border-slate-700 bg-slate-950/85 shadow-2xl">
+          <button
+            type="button"
+            onClick={() => zoomIn({ duration: 250 })}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition"
+            title={isTr ? 'Yakınlaştır (+)' : 'Zoom In (+)'}
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => zoomOut({ duration: 250 })}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition"
+            title={isTr ? 'Uzaklaştır (-)' : 'Zoom Out (-)'}
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => fitView({ duration: 300, padding: 0.15 })}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white transition"
+            title={isTr ? 'Ekrana Sığdır (Fit View)' : 'Fit to Screen'}
+          >
+            <Maximize2 className="w-4 h-4" />
+          </button>
+          <div className="h-4 w-px bg-slate-700" />
+          <button
+            type="button"
+            onClick={downloadSvg}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-xs font-mono transition"
+            title={isTr ? 'Şematiği SVG olarak indir' : 'Download Schematic as SVG'}
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>SVG</span>
+          </button>
+        </div>
+
         {layouting && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 text-sm">
             {isTr ? 'Şematik yerleştiriliyor…' : 'Laying out schematic…'}

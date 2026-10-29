@@ -35,7 +35,38 @@ function Stat({ label, value, hint }: { label: string; value: string | number; h
   );
 }
 
-function FsmDiagramCard({ fsm, isTr, onOpenFile }: { fsm: FsmMachine; isTr: boolean; onOpenFile: () => void }) {
+function findStateLine(content: string, stateName: string): number {
+  const lines = content.split('\n');
+  const cleanName = stateName.replace(/^OP_/, '');
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (
+      new RegExp(`\\b${cleanName}\\s*:`, 'i').test(l) ||
+      new RegExp(`when\\s+["']?${cleanName}["']?\\s*=>`, 'i').test(l) ||
+      new RegExp(`<=\\s*${cleanName}\\b`, 'i').test(l) ||
+      new RegExp(`=\\s*${cleanName}\\b`, 'i').test(l) ||
+      new RegExp(`\\b${cleanName}\\b`, 'i').test(l)
+    ) {
+      return i + 1;
+    }
+  }
+  return 1;
+}
+
+function FsmDiagramCard({
+  fsm,
+  isTr,
+  onOpenFile,
+  onStateClick,
+  onTransitionClick,
+}: {
+  fsm: FsmMachine;
+  isTr: boolean;
+  onOpenFile: () => void;
+  onStateClick: (state: string) => void;
+  onTransitionClick: (from: string, to: string, cond: string) => void;
+}) {
+  const [hoveredTransition, setHoveredTransition] = useState<string | null>(null);
   const N = fsm.states.length;
   const W = 520;
   const H = 220;
@@ -87,11 +118,14 @@ function FsmDiagramCard({ fsm, isTr, onOpenFile }: { fsm: FsmMachine; isTr: bool
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-3 items-center">
-        <div className="bg-slate-950/80 border border-slate-800/90 rounded-lg p-2">
+        <div className="bg-slate-950/80 border border-slate-800/90 rounded-lg p-2 relative">
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-48 overflow-visible">
             <defs>
               <marker id={`arrow-${fsm.name}`} markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
                 <polygon points="0 0, 8 3.5, 0 7" fill="#38bdf8" />
+              </marker>
+              <marker id={`arrow-active-${fsm.name}`} markerWidth="9" markerHeight="9" refX="8" refY="3.5" orient="auto">
+                <polygon points="0 0, 9 3.5, 0 7" fill="#facc15" />
               </marker>
             </defs>
 
@@ -99,16 +133,25 @@ function FsmDiagramCard({ fsm, isTr, onOpenFile }: { fsm: FsmMachine; isTr: bool
               const p1 = coords[tr.from];
               const p2 = coords[tr.to];
               if (!p1 || !p2) return null;
+              const isHovered = hoveredTransition === `${tr.from}->${tr.to}`;
+              const stroke = isHovered ? '#facc15' : '#38bdf8';
+              const strokeWidth = isHovered ? 2.5 : 1.4;
+              const markerEnd = isHovered ? `url(#arrow-active-${fsm.name})` : `url(#arrow-${fsm.name})`;
+
               if (tr.from === tr.to) {
                 return (
                   <path
                     key={i}
                     d={`M ${p1.x - 10} ${p1.y - 18} C ${p1.x - 26} ${p1.y - 46}, ${p1.x + 26} ${p1.y - 46}, ${p1.x + 10} ${p1.y - 18}`}
                     fill="none"
-                    stroke="#64748b"
-                    strokeWidth="1.3"
-                    strokeDasharray="3 2"
-                    markerEnd={`url(#arrow-${fsm.name})`}
+                    stroke={stroke}
+                    strokeWidth={strokeWidth}
+                    strokeDasharray={isHovered ? undefined : '3 2'}
+                    markerEnd={markerEnd}
+                    className="cursor-pointer transition-all"
+                    onMouseEnter={() => setHoveredTransition(`${tr.from}->${tr.to}`)}
+                    onMouseLeave={() => setHoveredTransition(null)}
+                    onClick={() => onTransitionClick(tr.from, tr.to, tr.condition)}
                   />
                 );
               }
@@ -124,14 +167,20 @@ function FsmDiagramCard({ fsm, isTr, onOpenFile }: { fsm: FsmMachine; isTr: bool
               const mx = (sx + ex) / 2 - uy * 16;
               const my = (sy + ey) / 2 + ux * 16;
               return (
-                <g key={i}>
+                <g
+                  key={i}
+                  className="cursor-pointer transition-all"
+                  onMouseEnter={() => setHoveredTransition(`${tr.from}->${tr.to}`)}
+                  onMouseLeave={() => setHoveredTransition(null)}
+                  onClick={() => onTransitionClick(tr.from, tr.to, tr.condition)}
+                >
                   <path
                     d={`M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`}
                     fill="none"
-                    stroke="#38bdf8"
-                    strokeWidth="1.5"
-                    opacity={0.85}
-                    markerEnd={`url(#arrow-${fsm.name})`}
+                    stroke={stroke}
+                    strokeWidth={strokeWidth}
+                    opacity={isHovered ? 1 : 0.8}
+                    markerEnd={markerEnd}
                   />
                 </g>
               );
@@ -145,7 +194,12 @@ function FsmDiagramCard({ fsm, isTr, onOpenFile }: { fsm: FsmMachine; isTr: bool
               const stroke = isDead ? '#ef4444' : isReset ? '#10b981' : '#6366f1';
               const fill = isDead ? '#450a0a' : isReset ? '#064e3b' : '#1e1b4b';
               return (
-                <g key={st}>
+                <g
+                  key={st}
+                  className="cursor-pointer transition-transform hover:scale-105 select-none"
+                  onClick={() => onStateClick(st)}
+                >
+                  <title>{isTr ? `Koddaki '${st}' satırına odaklan (Tıkla)` : `Focus '${st}' line in editor (Click)`}</title>
                   {isReset && (
                     <ellipse
                       cx={pt.x}
@@ -163,7 +217,7 @@ function FsmDiagramCard({ fsm, isTr, onOpenFile }: { fsm: FsmMachine; isTr: bool
                     x={pt.x}
                     y={pt.y + 3.5}
                     textAnchor="middle"
-                    className="fill-slate-100 text-[10px] font-mono font-bold select-none"
+                    className="fill-slate-100 text-[10px] font-mono font-bold"
                   >
                     {st.length > 10 ? st.slice(0, 9) + '…' : st}
                   </text>
@@ -178,16 +232,30 @@ function FsmDiagramCard({ fsm, isTr, onOpenFile }: { fsm: FsmMachine; isTr: bool
             <span>{isTr ? 'Durum Geçiş Tablosu (From ➔ To)' : 'State Transitions (From ➔ To)'}</span>
             <span className="text-emerald-400">Reset: {fsm.reset_state}</span>
           </div>
-          {fsm.transitions.map((t, idx) => (
-            <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-slate-900/70 border border-slate-800/70">
-              <span className="text-sky-300">
-                {t.from} <span className="text-slate-500">➔</span> <strong className="text-emerald-300">{t.to}</strong>
-              </span>
-              <span className="text-[10px] text-slate-400 truncate max-w-[170px]" title={t.condition}>
-                {t.condition}
-              </span>
-            </div>
-          ))}
+          {fsm.transitions.map((t, idx) => {
+            const isHovered = hoveredTransition === `${t.from}->${t.to}`;
+            return (
+              <div
+                key={idx}
+                onMouseEnter={() => setHoveredTransition(`${t.from}->${t.to}`)}
+                onMouseLeave={() => setHoveredTransition(null)}
+                onClick={() => onTransitionClick(t.from, t.to, t.condition)}
+                className={`flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer transition border ${
+                  isHovered
+                    ? 'bg-sky-950/80 border-sky-400 text-white shadow-glow'
+                    : 'bg-slate-900/70 border-slate-800/70 hover:border-slate-600'
+                }`}
+                title={isTr ? 'Bu geçiş koşuluna kodda odaklan' : 'Jump to this transition in code'}
+              >
+                <span className="text-sky-300">
+                  {t.from} <span className="text-slate-500">➔</span> <strong className="text-emerald-300">{t.to}</strong>
+                </span>
+                <span className="text-[10px] text-slate-400 truncate max-w-[170px]" title={t.condition}>
+                  {t.condition}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -298,6 +366,26 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
     }
   };
 
+  const handleGotoState = async (file: string, stateName: string) => {
+    try {
+      const code = await ws.readFile(info.root, file);
+      const line = findStateLine(code, stateName);
+      onGoto({ severity: 'warning', file, line, message: `FSM State: ${stateName}` });
+    } catch {
+      onGoto({ severity: 'warning', file, line: 1, message: stateName });
+    }
+  };
+
+  const handleGotoTransition = async (file: string, from: string, to: string, cond: string) => {
+    try {
+      const code = await ws.readFile(info.root, file);
+      const line = findStateLine(code, to) || findStateLine(code, from);
+      onGoto({ severity: 'warning', file, line, message: `FSM Transition: ${from} -> ${to} (${cond})` });
+    } catch {
+      onGoto({ severity: 'warning', file, line: 1, message: `${from} -> ${to}` });
+    }
+  };
+
   const rtlFiles = info.files.filter((f) => f.group === 'rtl' && !f.is_header);
   const tbFiles = info.files.filter((f) => f.group === 'tb' && !f.is_header);
   const lines = info.files.reduce((a, f) => a + f.lines, 0);
@@ -403,6 +491,8 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
                 fsm={m}
                 isTr={isTr}
                 onOpenFile={() => onGoto({ severity: 'warning', file: m.file, line: 1, message: m.name })}
+                onStateClick={(st) => handleGotoState(m.file, st)}
+                onTransitionClick={(from, to, cond) => handleGotoTransition(m.file, from, to, cond)}
               />
             ))}
           </div>

@@ -93,7 +93,9 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
   const [showMeasurements, setShowMeasurements] = useState<boolean>(false);
   const [picker, setPicker] = useState(false);
   const [filter, setFilter] = useState('');
+  const [signalSearch, setSignalSearch] = useState('');
   const [width, setWidth] = useState(600);
+  const [activeRadixSignal, setActiveRadixSignal] = useState<string | null>(null);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const waveCv = useRef<HTMLCanvasElement>(null);
@@ -135,7 +137,12 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
   }, [wave]);
 
   const rows = selected.map((n) => byName.get(n)).filter(Boolean) as WaveSignal[];
-  const rowsHeight = Math.max(rows.length, 1) * ROW_H;
+  const visibleRows = useMemo(() => {
+    if (!signalSearch.trim()) return rows;
+    const q = signalSearch.trim().toLowerCase();
+    return rows.filter((s) => s.name.toLowerCase().includes(q) || s.short.toLowerCase().includes(q));
+  }, [rows, signalSearch]);
+  const rowsHeight = Math.max(visibleRows.length, 1) * ROW_H;
 
   const clampView = useCallback((t0: number, t1: number): [number, number] => {
     const maxSpan = endT * 1.02;
@@ -289,7 +296,7 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
 
     g.font = '11px ui-monospace, monospace';
     g.textBaseline = 'middle';
-    rows.forEach((s, ri) => {
+    visibleRows.forEach((s, ri) => {
       const ch = wave.changes[s.id] ?? [];
       const yTop = ri * ROW_H + 5, yBot = ri * ROW_H + ROW_H - 5, yMid = (yTop + yBot) / 2;
       g.strokeStyle = '#0f1b33';
@@ -381,7 +388,7 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
     drawCursor(hover, '#94a3b8', true);
     drawCursor(markerA, '#facc15', false);
     drawCursor(markerB, '#f97316', false);
-  }, [wave, rows, view, width, radix, analogMode, hover, markerA, markerB, psTick, endT, rowsHeight]);
+  }, [wave, visibleRows, view, width, radix, analogMode, hover, markerA, markerB, psTick, endT, rowsHeight]);
 
   const toggleSignal = (name: string) =>
     setSelected((cur) => (cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name]));
@@ -404,21 +411,39 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
         </button>
         <span className="text-xs text-gray-400">{tbTop ? `tb: ${tbTop}` : (isTr ? 'Testbench seçilmedi' : 'No testbench selected')}</span>
 
-        {deltaInfo && (
-          <div className="px-2.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-mono flex items-center gap-1.5">
-            <Ruler className="w-3.5 h-3.5" />
-            <span>Δt (A↔B) = {deltaInfo.dtStr}</span>
-            {deltaInfo.freqMhz && <span className="text-amber-400/80">({deltaInfo.freqMhz} MHz)</span>}
+        {/* Dynamic Measurement HUD Pill */}
+        <div className="hidden lg:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-900/90 border border-slate-700/80 font-mono text-[11px]">
+          <span className="text-amber-300 font-semibold flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+            A: {markerA !== null ? formatTime(markerA, psTick) : (cursorT !== null ? formatTime(cursorT, psTick) : '—')}
+          </span>
+          {markerB !== null && (
+            <span className="text-orange-400 font-semibold flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-orange-400 inline-block" />
+              B: {formatTime(markerB, psTick)}
+            </span>
+          )}
+          {deltaInfo ? (
+            <span className="text-emerald-300 font-semibold border-l border-slate-700 pl-2 flex items-center gap-1">
+              <Ruler className="w-3 h-3 text-emerald-400" />
+              Δt = {deltaInfo.dtStr} {deltaInfo.freqMhz && `(${deltaInfo.freqMhz} MHz)`}
+            </span>
+          ) : (
+            <span className="text-slate-500 text-[10px] border-l border-slate-800 pl-2">
+              {isTr ? 'Shift+Tık ile B koy' : 'Shift+Click for Marker B'}
+            </span>
+          )}
+          {(markerA !== null || markerB !== null) && (
             <button
               type="button"
               onClick={() => { setMarkerA(null); setMarkerB(null); }}
-              className="ml-1 hover:text-white"
+              className="text-slate-400 hover:text-rose-400 text-xs ml-1"
               title={isTr ? 'İmleçleri temizle' : 'Clear markers'}
             >
               ✕
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -489,25 +514,74 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
       ) : (
         <>
           <div className="flex border-b border-slate-700 flex-shrink-0">
-            <div style={{ width: NAME_W }} className="px-3 flex items-center gap-2 text-[11px] font-mono text-gray-400 bg-dark flex-shrink-0">
-              <span>A: {markerA !== null ? formatTime(markerA, psTick) : (cursorT !== null ? formatTime(cursorT, psTick) : '—')}</span>
+            <div style={{ width: NAME_W }} className="px-3 flex items-center justify-between text-[11px] font-mono text-gray-400 bg-dark flex-shrink-0">
+              <span className="text-amber-300">A: {markerA !== null ? formatTime(markerA, psTick) : (cursorT !== null ? formatTime(cursorT, psTick) : '—')}</span>
               {markerB !== null && <span className="text-orange-400">B: {formatTime(markerB, psTick)}</span>}
             </div>
             <div className="flex-1 overflow-hidden"><canvas ref={rulerCv} /></div>
           </div>
           <div className="flex-1 overflow-y-auto flex min-h-0">
-            <div style={{ width: NAME_W }} className="flex-shrink-0 bg-dark border-r border-slate-700">
-              {rows.map((s) => (
-                <div key={s.name} style={{ height: ROW_H }}
-                  className="group flex items-center gap-2 px-3 border-b border-slate-800 text-xs font-mono">
-                  <span className="truncate" title={s.name}>{s.short}</span>
-                  <span className="ml-auto text-primary truncate max-w-[110px]">{valueAtCursor(s)}</span>
-                  <button className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400" onClick={() => toggleSignal(s.name)}>
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              {rows.length === 0 && <div className="p-3 text-xs text-gray-500">{isTr ? '"Sinyaller" ile ekleyin' : 'Add via "Signals"'}</div>}
+            <div style={{ width: NAME_W }} className="flex-shrink-0 bg-dark border-r border-slate-700 flex flex-col">
+              {/* Quick Signal Search Header in Left Panel */}
+              <div className="p-1.5 border-b border-slate-800 bg-slate-950/80 flex items-center gap-1.5">
+                <input
+                  type="text"
+                  value={signalSearch}
+                  onChange={(e) => setSignalSearch(e.target.value)}
+                  placeholder={isTr ? 'Sinyal Ara (Filtrele)...' : 'Filter signals...'}
+                  className="w-full px-2 py-0.5 rounded bg-darker border border-slate-700 text-xs font-mono placeholder:text-slate-500 focus:border-indigo-500 outline-none"
+                />
+                {signalSearch && (
+                  <button onClick={() => setSignalSearch('')} className="text-slate-500 hover:text-white text-xs px-1">✕</button>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {visibleRows.map((s) => (
+                  <div
+                    key={s.name}
+                    style={{ height: ROW_H }}
+                    className="group relative flex items-center gap-2 px-3 border-b border-slate-800 text-xs font-mono hover:bg-slate-900/60"
+                  >
+                    <span
+                      className="truncate cursor-pointer hover:text-sky-300"
+                      title={`${s.name} — ${isTr ? 'Çift tıkla: Radix menüsü' : 'Double click: Radix menu'}`}
+                      onDoubleClick={() => setActiveRadixSignal((cur) => (cur === s.name ? null : s.name))}
+                    >
+                      {s.short}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveRadixSignal((cur) => (cur === s.name ? null : s.name))}
+                      className="text-[9px] px-1 py-0.2 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 font-mono"
+                      title={isTr ? 'Radix değiştir' : 'Change radix'}
+                    >
+                      {radix.slice(0, 3).toUpperCase()}
+                    </button>
+                    {activeRadixSignal === s.name && (
+                      <div className="absolute left-8 top-full z-30 bg-slate-900 border border-slate-700 rounded shadow-xl py-1 px-1 flex gap-1 text-[10px]">
+                        {(['hex', 'signed', 'dec', 'bin'] as Radix[]).map((rx) => (
+                          <button
+                            key={rx}
+                            onClick={() => { setRadix(rx); setActiveRadixSignal(null); }}
+                            className={`px-1.5 py-0.5 rounded font-mono ${radix === rx ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+                          >
+                            {rx.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <span className="ml-auto text-primary truncate max-w-[105px]">{valueAtCursor(s)}</span>
+                    <button className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400" onClick={() => toggleSignal(s.name)}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+                {visibleRows.length === 0 && (
+                  <div className="p-3 text-xs text-gray-500 font-mono">
+                    {signalSearch ? (isTr ? 'Eşleşen sinyal yok' : 'No matching signal') : (isTr ? '"Sinyaller" ile ekleyin' : 'Add via "Signals"')}
+                  </div>
+                )}
+              </div>
             </div>
             <div ref={wrapRef} className="flex-1 min-w-0 overflow-hidden">
               <canvas

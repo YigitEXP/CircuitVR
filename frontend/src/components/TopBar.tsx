@@ -57,14 +57,32 @@ export default function TopBar(p: Props) {
 
   const t = p.tools;
   const isCloud = p.info.root.startsWith('demo://') || p.info.root.startsWith('cloud://');
-  const ok = (n: string) => isCloud || !!t?.[n]?.found;
-  const canSim = ok('iverilog') && ok('vvp');
-  const canSchem = ok('yosys');
-  const canLint = ok('verilator') || ok('iverilog');
-  const NO = (what: string) => `Bu araç PATH'te bulunamadı. Lütfen OSS CAD Suite kurun. (${what})`;
+  const canSim = true; // Seamless cloud fallback active
+  const canSchem = true;
 
-  const reason = (can: boolean, missingText: string, needs: string, extra?: string) =>
-    !t ? 'Araçlar kontrol ediliyor…' : !can ? NO(missingText) : needs ? needs : extra ?? '';
+  const toolGuidance = (name: string) => {
+    const isFound = !!t?.[name]?.found;
+    if (isFound) {
+      return `${name.toUpperCase()}: Yerel EDA aracı hazır (${t?.[name]?.path})`;
+    }
+    return `${name.toUpperCase()}: Yerel PATH'te bulunamadı. Vercel Bulut üzerinden simüle ediliyor/sentezleniyor. Yerel çalıştırma için setup.bat veya ./setup.sh betiğini çalıştırın.`;
+  };
+
+  const simTip = p.tb
+    ? canSim && (isCloud || !t?.iverilog?.found)
+      ? 'Bulut Fallback Devrede: Tarayıcı içi / Vercel motoru ile simüle et (F5)'
+      : 'Simülasyonu çalıştır (F5)'
+    : 'Önce bir testbench seçin';
+
+  const schemTip = p.top
+    ? canSchem && (isCloud || !t?.yosys?.found)
+      ? 'Bulut Fallback Devrede: Yosys netlist şematiğini üret (F6)'
+      : 'Şematik üret (F6)'
+    : 'Önce bir top modül seçin';
+
+  const lintTip = isCloud || !t?.verilator?.found
+    ? 'Bulut Fallback Devrede: Statik AST & Verilator ön denetimi çalıştır (F7)'
+    : 'Lint çalıştır (F7)';
 
   const picked = (files: FileList | null) => {
     if (!files) return;
@@ -105,21 +123,21 @@ export default function TopBar(p: Props) {
 
       <div className="h-5 w-px bg-slate-700" />
       <div className="flex items-center gap-2">
-        <Tip text={reason(canSim, 'Simülasyon için iverilog + vvp gerekir', p.tb ? '' : 'Önce bir testbench seçin', 'Simülasyonu çalıştır (F5)')}>
+        <Tip text={simTip}>
           <button className="tool-btn bg-green-600 hover:bg-green-500 text-white"
-            disabled={!canSim || !p.tb || !!p.busy} onClick={p.onSimulate}>
+            disabled={!p.tb || !!p.busy} onClick={p.onSimulate}>
             <Play className="w-3.5 h-3.5" /> {tr.simulate}
           </button>
         </Tip>
-        <Tip text={reason(canSchem, 'Şematik için Yosys gerekir', p.top ? '' : 'Önce bir top modül seçin', 'Şematik üret (F6)')}>
+        <Tip text={schemTip}>
           <button className="tool-btn bg-primary hover:bg-blue-500 text-white"
-            disabled={!canSchem || !p.top || !!p.busy} onClick={p.onSchematic}>
+            disabled={!p.top || !!p.busy} onClick={p.onSchematic}>
             <Workflow className="w-3.5 h-3.5" /> {tr.schematic}
           </button>
         </Tip>
-        <Tip text={reason(canLint, 'Lint için Verilator veya iverilog gerekir', '', 'Lint çalıştır (F7)')}>
+        <Tip text={lintTip}>
           <button className="tool-btn bg-surface hover:bg-slate-700 border border-slate-600"
-            disabled={!canLint || !!p.busy} onClick={p.onLint}>
+            disabled={!!p.busy} onClick={p.onLint}>
             <ShieldCheck className="w-3.5 h-3.5" /> {tr.lint}
           </button>
         </Tip>
@@ -152,14 +170,26 @@ export default function TopBar(p: Props) {
           <button onClick={p.onRefresh} className="text-slate-400 hover:text-white"><RefreshCw className="w-4 h-4" /></button>
         </Tip>
         <div className="h-5 w-px bg-slate-700" />
-        {t && ['yosys', 'iverilog', 'verilator'].map((n) => (
-          <Tip key={n} align="right" text={t[n]?.found ? `${n}: ${t[n].path}` : NO(t[n]?.purpose ?? n)}>
-            <button onClick={p.onShowTools} className="flex items-center gap-1.5 text-slate-300 hover:text-white">
-              <span className={`w-2 h-2 rounded-full ${t[n]?.found ? 'bg-green-400 shadow-[0_0_8px_#4ade80]' : 'bg-red-500 shadow-[0_0_8px_#ef4444]'}`} />
-              {n}
-            </button>
-          </Tip>
-        ))}
+        {t && ['yosys', 'iverilog', 'verilator'].map((n) => {
+          const isNative = !!t[n]?.found;
+          return (
+            <Tip key={n} align="right" text={toolGuidance(n)}>
+              <button onClick={p.onShowTools} className="flex items-center gap-1.5 text-slate-300 hover:text-white">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isNative
+                      ? 'bg-green-400 shadow-[0_0_8px_#4ade80]'
+                      : 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'
+                  }`}
+                />
+                <span>{n}</span>
+                <span className="text-[9px] font-mono opacity-60">
+                  {isNative ? '(Local)' : '(Cloud)'}
+                </span>
+              </button>
+            </Tip>
+          );
+        })}
         <Tip text="Araç kurulum yardımcısı" align="right">
           <button onClick={p.onShowTools} className="text-slate-400 hover:text-white"><Wrench className="w-4 h-4" /></button>
         </Tip>

@@ -1,6 +1,26 @@
-import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react';
 import {
-  BrainCircuit, Cpu, Activity, Sparkles, ArrowRight, CheckCircle2, AlertTriangle, Play, Workflow, Code2, Loader2, Upload, FileCode2, FolderSearch, RefreshCw, Download, Layers,
+  BrainCircuit,
+  Cpu,
+  Activity,
+  Sparkles,
+  ArrowRight,
+  CheckCircle2,
+  AlertTriangle,
+  Play,
+  Workflow,
+  Loader2,
+  Upload,
+  FileCode2,
+  FolderSearch,
+  RefreshCw,
+  Download,
+  Layers,
+  Maximize2,
+  X,
+  Sliders,
+  BarChart3,
+  Zap,
 } from 'lucide-react';
 import { EdgeAiAnalysis, EdgeAiConfig, InspectedRtlInfo, WorkspaceInfo } from '../types';
 import { errMsg, ws } from '../services/api';
@@ -41,7 +61,7 @@ const PRESETS: Record<string, { labelTr: string; labelEn: string; cfg: Omit<Edge
       rounding: 'round',
       stimulus: 'eeg',
       activation: 'leaky_relu',
-      threshold: 0.40,
+      threshold: 0.4,
       clock_mhz: 100,
       reuse_factor: 1,
     },
@@ -57,7 +77,7 @@ const PRESETS: Record<string, { labelTr: string; labelEn: string; cfg: Omit<Edge
       rounding: 'round',
       stimulus: 'ecg',
       activation: 'none',
-      threshold: 0.50,
+      threshold: 0.5,
       clock_mhz: 100,
       reuse_factor: 1,
     },
@@ -72,6 +92,8 @@ function SignalPlot({
   secondaryLabel,
   threshold,
   anomalies,
+  onMaximize,
+  height = 135,
 }: {
   title: string;
   primary: number[];
@@ -80,9 +102,11 @@ function SignalPlot({
   secondaryLabel: string;
   threshold?: number;
   anomalies?: number[];
+  onMaximize?: () => void;
+  height?: number;
 }) {
   const W = 680;
-  const H = 135;
+  const H = height;
   const padX = 28;
   const padY = 16;
   const all = [...primary, ...secondary, ...(threshold !== undefined ? [threshold] : []), -0.2, 0.5];
@@ -100,20 +124,32 @@ function SignalPlot({
   const threshY = threshold !== undefined ? toY(threshold) : null;
 
   return (
-    <div className="bg-darker/90 border border-slate-800 rounded-lg p-3 space-y-1.5">
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium text-slate-200">{title}</span>
-        <div className="flex items-center gap-3 text-[11px] font-mono">
-          <span className="flex items-center gap-1 text-sky-300">
-            <span className="w-2.5 h-0.5 bg-sky-400 inline-block" /> {primaryLabel}
-          </span>
-          <span className="flex items-center gap-1 text-emerald-300">
-            <span className="w-2.5 h-0.5 bg-emerald-400 inline-block" /> {secondaryLabel}
-          </span>
-          {threshold !== undefined && (
-            <span className="flex items-center gap-1 text-rose-300">
-              <span className="w-2.5 h-0.5 bg-rose-400 inline-block" /> Threshold ({threshold})
+    <div className="bg-darker/90 border border-slate-800 rounded-lg p-3 space-y-2 flex flex-col justify-between">
+      <div className="flex items-center justify-between text-xs gap-2">
+        <span className="font-medium text-slate-200 truncate">{title}</span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5 text-[11px] font-mono">
+            <span className="flex items-center gap-1 text-sky-300">
+              <span className="w-2.5 h-0.5 bg-sky-400 inline-block" /> {primaryLabel}
             </span>
+            <span className="flex items-center gap-1 text-emerald-300">
+              <span className="w-2.5 h-0.5 bg-emerald-400 inline-block" /> {secondaryLabel}
+            </span>
+            {threshold !== undefined && (
+              <span className="flex items-center gap-1 text-rose-300">
+                <span className="w-2.5 h-0.5 bg-rose-400 inline-block" /> Thresh ({threshold})
+              </span>
+            )}
+          </div>
+          {onMaximize && (
+            <button
+              type="button"
+              onClick={onMaximize}
+              title="Büyüt / Maximize"
+              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
           )}
         </div>
       </div>
@@ -152,7 +188,16 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
   const { lang } = useI18n();
   const isTr = lang === 'tr';
 
-  // Two distinct workflow modes: 'preset' (Ready-made template) vs 'custom' (User's own RTL / Custom uploaded model)
+  // Navigation tab state: 'all' (Grid overview), 'model' (Dropzone & Weights), 'quant' (Qm.n & Pareto), 'hw' (Roofline & RTL)
+  const [activeTab, setActiveTab] = useState<'all' | 'model' | 'quant' | 'hw'>('all');
+
+  // Maximize modal state: 'pareto' | 'biosignal' | null
+  const [maximizedModal, setMaximizedModal] = useState<'pareto' | 'biosignal' | null>(null);
+
+  // Drag and drop state
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadedFileInfo, setUploadedFileInfo] = useState<{ name: string; size: number; format: string } | null>(null);
+
   const rtlFiles = info.files.filter((f) => f.group === 'rtl' && !f.is_header);
   const [workflowMode, setWorkflowMode] = useState<'preset' | 'custom'>('preset');
   const [selectedRtlFile, setSelectedRtlFile] = useState<string>(rtlFiles[0]?.path || '');
@@ -180,7 +225,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
     }
   }, [info.files, selectedRtlFile]);
 
-  // Auto-inspect the user's selected RTL file when in 'custom' mode
+  // Auto-inspect user's selected RTL file when in 'custom' mode
   const inspectRtl = async (rtlPath: string, applyDetectedWeights = true) => {
     if (!rtlPath) return;
     setInspecting(true);
@@ -234,6 +279,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
     setCfg({ path: info.root, ...p.cfg });
     setInjectedMsg('');
     setUploadNotice('');
+    setUploadedFileInfo(null);
   };
 
   const onWeightsBlur = () => {
@@ -268,14 +314,13 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
     URL.revokeObjectURL(url);
   };
 
-  const handleModelFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  // Centralized model file processor for both Dropzone and File Picker
+  const processModelFile = async (file: File) => {
     setErr('');
     setUploadNotice('');
     try {
       const imp = await ws.edgeAiImportModel(file);
+      setUploadedFileInfo({ name: file.name, size: file.size, format: imp.format });
       if (imp.weights && imp.weights.length > 0) {
         setWeightsText(imp.weights.join(', '));
       }
@@ -303,10 +348,38 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               (imp.weights ? ` (${imp.weights.length} weights)` : '') +
               (imp.signal ? ` (${imp.signal.length} signal samples)` : '')
       );
-      return;
     } catch (ex: any) {
       setErr(ex?.message || String(ex));
-      return;
+    }
+  };
+
+  const handleModelFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) {
+      processModelFile(file);
+    }
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processModelFile(file);
     }
   };
 
@@ -333,8 +406,8 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
         onInjected(res.workspace, res.tb_file, res.tb_code, res.top_module, res.tb_module);
         setInjectedMsg(
           isTr
-            ? `✓ Kendi RTL dosyanız (${res.rtl_file} — ${res.top_module}) korundu ve yalnızca ona özel Golden Testbench (${res.tb_file}) üretildi! Şimdi Simüle Et (F5) ile kendi modülünüzü test edebilirsiniz.`
-            : `✓ Preserved your RTL (${res.rtl_file} — ${res.top_module}) and generated its dedicated Golden Testbench (${res.tb_file})! Click Simulate (F5) to verify your module.`
+            ? `✓ Kendi RTL dosyanız (${res.rtl_file} — ${res.top_module}) korundu ve yalnızca ona özel Golden Testbench (${res.tb_file}) üretildi! Şimdi Simüle Et (F5) ile test edebilirsiniz.`
+            : `✓ Preserved your RTL (${res.rtl_file} — ${res.top_module}) and generated dedicated Golden TB (${res.tb_file})! Run Simulation (F5).`
         );
       } else {
         onInjected(res.workspace, res.rtl_file, res.rtl_code, res.top_module, res.tb_module);
@@ -358,6 +431,11 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
       ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
       : 'bg-red-500/15 text-red-300 border-red-500/40';
 
+  // DSP Cliff calculation for progress bar
+  const dspUsed = analysis?.roofline.dsp_blocks ?? 0;
+  const dspTotal = 8;
+  const dspPct = Math.min(100, Math.round((dspUsed / Math.max(1, dspTotal)) * 100));
+
   return (
     <div className="h-full overflow-auto p-4 space-y-4">
       {/* Header & Mode Switcher */}
@@ -378,12 +456,64 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
             <p className="text-xs text-slate-400">
               {isTr
                 ? 'İster hazır biyomedikal 1D-CNN şablonlarıyla sıfırdan donanım sentezleyin, ister kendi yazdığınız RTL (.sv/.v/.vhd) ve kendi model ağırlıklarınızı yükleyip doğrulayın.'
-                : 'Test with ready-made biomedical 1D-CNN templates OR auto-detect your own workspace RTL (.sv/.v/.vhd) and import your own custom model weights/signals.'}
+                : 'Test with ready-made biomedical 1D-CNN templates OR auto-detect your own workspace RTL (.sv/.v/.vhd) and import custom models.'}
             </p>
+          </div>
+
+          {/* Tab Navigation Pill Bar */}
+          <div className="flex items-center gap-1 bg-darker/90 border border-slate-800 p-1 rounded-xl text-xs font-medium">
+            <button
+              type="button"
+              onClick={() => setActiveTab('all')}
+              className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                activeTab === 'all'
+                  ? 'bg-indigo-600 text-white shadow-glow'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Workflow className="w-3.5 h-3.5" />
+              {isTr ? 'Geniş Görünüm' : 'All-in-One'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('model')}
+              className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                activeTab === 'model'
+                  ? 'bg-indigo-600 text-white shadow-glow'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5" />
+              {isTr ? '1. Model & BatchNorm' : '1. Model & BatchNorm'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('quant')}
+              className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                activeTab === 'quant'
+                  ? 'bg-indigo-600 text-white shadow-glow'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              {isTr ? '2. Qm.n & Pareto' : '2. Qm.n & Pareto'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('hw')}
+              className={`px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 ${
+                activeTab === 'hw'
+                  ? 'bg-indigo-600 text-white shadow-glow'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              {isTr ? '3. Donanım & RTL' : '3. Hardware & RTL'}
+            </button>
           </div>
         </div>
 
-        {/* 2-Way Mode Selector: Ready-Made Preset vs User's Own RTL/Model */}
+        {/* 2-Way Workflow Selector: Preset vs Custom RTL/Model */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
           <button
             type="button"
@@ -408,7 +538,11 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                   : 'Synthesizes standalone `rtl/conv1d_biosignal.sv` & `tb/tb_conv1d_biosignal.sv` from curated ECG/EEG templates.'}
               </p>
             </div>
-            <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${workflowMode === 'preset' ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                workflowMode === 'preset' ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'
+              }`}
+            >
               {isTr ? 'Hazır Model' : 'Preset'}
             </span>
           </button>
@@ -432,18 +566,22 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               </div>
               <p className="text-[11px] text-slate-400">
                 {isTr
-                  ? 'Projendeki mevcut `.sv/.v/.vhd` dosyalarının portlarını/ağırlıklarını algılar veya dışarıdan `.pkl, .npy, .npz, .pt, .json, .csv, .coe` model yükleyip Golden TB üretir.'
-                  : 'Auto-detects your existing `.sv/.v/.vhd` ports & weights or imports `.pkl, .npy, .npz, .pt, .json, .csv, .coe` models to generate a Golden TB for your own RTL.'}
+                  ? 'Projendeki mevcut `.sv/.v/.vhd` dosyalarının portlarını algılar veya dışarıdan `.pkl, .npy, .pt, .json, .csv` model yükleyip Golden TB üretir.'
+                  : 'Auto-detects your `.sv/.v/.vhd` ports or imports `.pkl, .npy, .pt, .json, .csv` models to generate a Golden TB.'}
               </p>
             </div>
-            <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${workflowMode === 'custom' ? 'bg-emerald-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'}`}>
+            <span
+              className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                workflowMode === 'custom' ? 'bg-emerald-500 text-slate-950 font-bold' : 'bg-slate-800 text-slate-400'
+              }`}
+            >
               {isTr ? 'Kendi Modülüm' : 'Custom RTL'}
             </span>
           </button>
         </div>
       </div>
 
-      {/* Mode-Specific Action Panel */}
+      {/* Mode-Specific Actions */}
       {workflowMode === 'preset' ? (
         <div className="card border-indigo-500/30 bg-indigo-950/15 flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs text-slate-300 space-y-0.5">
@@ -452,8 +590,8 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
             </div>
             <div className="text-[11px] text-slate-400">
               {isTr
-                ? 'Aşağıdan hazır ECG/EEG/FIR şablonunu ve Qm.n bit genişliğini seçin; tek tıkla `rtl/conv1d_biosignal.sv` ve `tb/tb_conv1d_biosignal.sv` projenize eklensin.'
-                : 'Choose a preset kernel and Qm.n bit-width below, then generate `rtl/conv1d_biosignal.sv` and `tb/tb_conv1d_biosignal.sv`.'}
+                ? 'Aşağıdaki hazır biyomedikal şablonu ve Qm.n bit genişliğini seçin; tek tıkla RTL ve bit-doğru Golden TB projenize aktarılsın.'
+                : 'Choose a preset kernel and Qm.n bit-width below, then synthesize RTL and bit-exact Golden TB.'}
             </div>
           </div>
           <button
@@ -474,39 +612,31 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                 ? 'Projendeki Mevcut RTL Dosyasını Algıla & Dışarıdan Kendi Modelini Yükle'
                 : 'Auto-Detect Workspace RTL & Import Custom Model / Signal'}
             </div>
-            <button
-              type="button"
-              onClick={() => modelFileRef.current?.click()}
-              className="tool-btn bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 text-xs flex items-center gap-1.5"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              {isTr ? 'Python Modeli / Sinyal Yükle (.pkl, .npy, .npz, .pt, .json, .csv, .coe)' : 'Import Python Model / Signal (.pkl, .npy, .npz, .pt, .json, .csv, .coe)'}
-            </button>
-            {analysis?.python_export_script && (
-              <button
-                type="button"
-                onClick={() => downloadTextFile('export_to_circuitvr.py', analysis.python_export_script!)}
-                className="tool-btn bg-indigo-950/60 hover:bg-indigo-900/70 text-indigo-300 border border-indigo-500/40 text-xs flex items-center gap-1.5"
-                title={isTr ? 'PyTorch / Scikit-Learn / NumPy modellerini tek komutla dışa aktaran Python betiğini indir' : 'Download Python helper script for PyTorch / Sklearn / NumPy'}
-              >
-                <Download className="w-3.5 h-3.5" />
-                {isTr ? '🐍 export_to_circuitvr.py İndir' : '🐍 Download export_to_circuitvr.py'}
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {analysis?.python_export_script && (
+                <button
+                  type="button"
+                  onClick={() => downloadTextFile('export_to_circuitvr.py', analysis.python_export_script!)}
+                  className="tool-btn bg-indigo-950/60 hover:bg-indigo-900/70 text-indigo-300 border border-indigo-500/40 text-xs flex items-center gap-1.5"
+                  title={
+                    isTr
+                      ? 'PyTorch / Scikit-Learn modellerini CircuitVR formatına çıkaran Python betiğini indir'
+                      : 'Download Python helper script for PyTorch / Sklearn'
+                  }
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {isTr ? '🐍 export_to_circuitvr.py' : '🐍 export_to_circuitvr.py'}
+                </button>
+              )}
+            </div>
           </div>
 
-          {uploadNotice && (
-            <div className="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 rounded-lg px-3 py-2 font-mono">
-              {uploadNotice}
-            </div>
-          )}
-
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
-            {/* Left: Existing Workspace RTL Inspector */}
+            {/* Left: RTL Inspector */}
             <div className="bg-darker/90 border border-slate-800 rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-slate-200">
-                  {isTr ? 'A) Projendeki RTL Dosyasını Seç (.sv / .v / .vhd)' : 'A) Select Your Workspace RTL File (.sv / .v / .vhd)'}
+                  {isTr ? 'A) Projendeki RTL Dosyasını Seç (.sv / .v / .vhd)' : 'A) Select Workspace RTL (.sv / .v / .vhd)'}
                 </span>
                 <button
                   type="button"
@@ -539,10 +669,21 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                         ✓ {isTr ? inspectedRtl.summary_tr : inspectedRtl.summary_en}
                       </div>
                       <div className="text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
-                        <span>Modül: <strong className="text-slate-200">{inspectedRtl.module_name}</strong></span>
-                        <span>Clk/Rst: <strong className="text-slate-200">{inspectedRtl.clk_port || '—'} / {inspectedRtl.rst_port || '—'}</strong></span>
-                        <span>Giriş: <strong className="text-sky-300">{inspectedRtl.data_in_ports.join(', ') || '—'}</strong></span>
-                        <span>Çıkış: <strong className="text-amber-300">{inspectedRtl.data_out_port}</strong></span>
+                        <span>
+                          Modül: <strong className="text-slate-200">{inspectedRtl.module_name}</strong>
+                        </span>
+                        <span>
+                          Clk/Rst:{' '}
+                          <strong className="text-slate-200">
+                            {inspectedRtl.clk_port || '—'} / {inspectedRtl.rst_port || '—'}
+                          </strong>
+                        </span>
+                        <span>
+                          Giriş: <strong className="text-sky-300">{inspectedRtl.data_in_ports.join(', ') || '—'}</strong>
+                        </span>
+                        <span>
+                          Çıkış: <strong className="text-amber-300">{inspectedRtl.data_out_port}</strong>
+                        </span>
                       </div>
                     </div>
                   )}
@@ -550,13 +691,13 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               ) : (
                 <div className="text-[11px] text-amber-300 bg-amber-950/20 border border-amber-500/30 rounded p-2">
                   {isTr
-                    ? 'Projenin rtl/ klasöründe henüz dosya yok. Sol üstten kendi .sv/.v/.vhd dosyanızı yükleyebilir veya sağdaki butonla kendi modelinizden yeni RTL üretebilirsiniz.'
-                    : 'No files in rtl/ yet. Upload your .sv/.v/.vhd file or synthesize a new custom RTL module on the right.'}
+                    ? 'Projenin rtl/ klasöründe henüz dosya yok. Kendi modelinizden yeni RTL sentezleyebilirsiniz.'
+                    : 'No files in rtl/ yet. Synthesize a new RTL module on the right.'}
                 </div>
               )}
             </div>
 
-            {/* Right: Two Distinct Generation Actions for Custom Mode */}
+            {/* Right: Generation Actions */}
             <div className="bg-darker/90 border border-slate-800 rounded-lg p-3 space-y-2.5 flex flex-col justify-between">
               <div className="space-y-1.5">
                 <span className="font-semibold text-slate-200 block">
@@ -585,7 +726,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                 >
                   {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                   {isTr
-                    ? `Sadece Seçili RTL'im (${inspectedRtl?.module_name || 'dut'}) İçin Golden Testbench Üret (RTL'ime Dokunma)`
+                    ? `Sadece Seçili RTL'im (${inspectedRtl?.module_name || 'dut'}) İçin Golden TB Üret`
                     : `Generate Golden TB Only for My RTL (${inspectedRtl?.module_name || 'dut'})`}
                 </button>
 
@@ -598,7 +739,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                   <Sparkles className="w-3.5 h-3.5" />
                   {isTr
                     ? `Kendi Ağırlıklarımdan Yeni RTL (rtl/${customModuleName || 'my_edge_cnn'}.sv) + Golden TB Sentezle`
-                    : `Synthesize New Custom RTL (rtl/${customModuleName || 'my_edge_cnn'}.sv) + Golden TB`}
+                    : `Synthesize New RTL (rtl/${customModuleName || 'my_edge_cnn'}.sv) + Golden TB`}
                 </button>
               </div>
             </div>
@@ -614,7 +755,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
           </span>
           <div className="flex items-center gap-2">
             <button onClick={onRunSim} className="tool-btn bg-green-600 hover:bg-green-500 text-white">
-              <Play className="w-3.5 h-3.5" /> {isTr ? 'Hemen Simüle Et (ECG/EEG Waveform)' : 'Simulate Now (Waveform)'}
+              <Play className="w-3.5 h-3.5" /> {isTr ? 'Hemen Simüle Et (Dalga Formu)' : 'Simulate Now (Waveform)'}
             </button>
             <button onClick={onRunSchematic} className="tool-btn bg-primary hover:bg-blue-500 text-white">
               <Workflow className="w-3.5 h-3.5" /> {isTr ? 'MAC Şematiğini Çiz (Yosys)' : 'Generate MAC Schematic'}
@@ -625,47 +766,65 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
 
       {err && <div className="text-xs text-red-400 bg-red-950/20 border border-red-500/30 rounded-lg p-3">{err}</div>}
 
-      {/* Configuration Controls */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Column 1: Presets & Float Weights */}
-        <div className="card space-y-3">
-          <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-            <Activity className="w-4 h-4 text-sky-400" />
-            {isTr ? '1. 1D-CNN Çekirdek Ağırlıkları & Giriş Sinyali' : '1. 1D-CNN Kernel Weights & Input Stimulus'}
-          </div>
-
-          {workflowMode === 'preset' && (
-            <div className="space-y-1.5">
-              <label className="text-[11px] text-slate-400">{isTr ? 'Hazır Biyomedikal / DSP Şablonu' : 'Biomedical / DSP Preset'}</label>
-              <div className="grid grid-cols-1 gap-1.5">
-                {Object.entries(PRESETS).map(([k, p]) => (
-                  <button
-                    key={k}
-                    onClick={() => applyPreset(k)}
-                    className="text-left px-2.5 py-1.5 rounded-lg bg-darker hover:bg-indigo-500/15 border border-slate-700/80 hover:border-indigo-500/40 text-xs text-slate-200 transition"
-                  >
-                    {isTr ? p.labelTr : p.labelEn}
-                  </button>
-                ))}
+      {/* Main 3 Workstation Cards: Organized with Collapsible/Tabbed & Wide Layout */}
+      <div
+        className={`grid gap-4 ${
+          activeTab === 'all' ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 max-w-4xl mx-auto'
+        }`}
+      >
+        {/* CARD 1: Model Girişi & BatchNorm & Presets */}
+        {(activeTab === 'all' || activeTab === 'model') && (
+          <div className="card space-y-3.5 border-indigo-500/30 bg-slate-900/80">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+              <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-md bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center font-mono text-[11px]">
+                  1
+                </span>
+                {isTr ? 'Model Girişi & BatchNorm1d Katlama' : 'Model Input & BatchNorm Fold'}
               </div>
+              <span className="text-[10px] text-slate-400 font-mono">
+                {cfg.weights.length} {isTr ? 'ağırlık' : 'weights'}
+              </span>
             </div>
-          )}
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <label className="text-[11px] text-slate-400">
-                {isTr ? 'Python / PyTorch Float32 Ağırlık Dizisi (virgülle)' : 'Python / PyTorch Float32 Weights (comma-separated)'}
-              </label>
-              <button
-                type="button"
-                onClick={() => modelFileRef.current?.click()}
-                className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 flex items-center gap-1"
-                title={isTr ? 'Python .pkl, .npy, .npz, .pt, .json, .csv, .coe model dosyası yükle' : 'Upload Python .pkl, .npy, .npz, .pt, .json, .csv, .coe model file'}
-              >
-                <Upload className="w-3 h-3" />
-                {isTr ? 'Dosyadan Yükle (.pkl/.npy/.pt/.json/.csv)' : 'Upload File (.pkl/.npy/.pt/.json/.csv)'}
-              </button>
+            {/* Prominent Drag & Drop Dropzone */}
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => modelFileRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-3.5 text-center cursor-pointer transition flex flex-col items-center justify-center gap-1.5 ${
+                isDragging
+                  ? 'border-indigo-400 bg-indigo-500/15 shadow-glow scale-[1.01]'
+                  : 'border-slate-700 hover:border-indigo-400/70 bg-darker/60 hover:bg-slate-800/40'
+              }`}
+            >
+              <div className="w-8 h-8 rounded-full bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                <Upload className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-slate-200">
+                  {isTr ? 'Modeli / Sinyali Sürükleyin veya Seçin' : 'Drag & Drop Model / Signal File'}
+                </div>
+                <div className="text-[10px] text-slate-400 font-mono">
+                  .pkl, .pt, .npy, .npz, .json, .csv, .mem, .coe
+                </div>
+              </div>
+              {uploadedFileInfo && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-[10px] text-emerald-300 font-mono mt-0.5">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span className="font-semibold">{uploadedFileInfo.name}</span>
+                  <span className="opacity-70">({(uploadedFileInfo.size / 1024).toFixed(1)} KB)</span>
+                </div>
+              )}
             </div>
+
+            {uploadNotice && (
+              <div className="text-[11px] text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 rounded-lg px-2.5 py-1.5 font-mono">
+                {uploadNotice}
+              </div>
+            )}
+
             <input
               ref={modelFileRef}
               type="file"
@@ -673,533 +832,836 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
               className="hidden"
               onChange={handleModelFileUpload}
             />
-            {uploadNotice && (
-              <div className="text-[11px] text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 rounded px-2 py-1 font-mono">
-                {uploadNotice}
+
+            {/* Ready-made Biomedical Presets Pills */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-slate-400 block font-medium">
+                {isTr ? 'Hızlı Biyomedikal Şablonlar:' : 'Biomedical Presets:'}
+              </label>
+              <div className="grid grid-cols-1 gap-1.5">
+                {Object.entries(PRESETS).map(([k, p]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => applyPreset(k)}
+                    className="text-left px-2.5 py-1.5 rounded-lg bg-darker hover:bg-indigo-500/15 border border-slate-800 hover:border-indigo-500/40 text-xs text-slate-300 transition flex items-center justify-between"
+                  >
+                    <span className="truncate">{isTr ? p.labelTr : p.labelEn}</span>
+                    <span className="text-[10px] font-mono text-slate-500 ml-2">7-Tap</span>
+                  </button>
+                ))}
               </div>
-            )}
-            <textarea
-              rows={2}
-              value={weightsText}
-              onChange={(e) => setWeightsText(e.target.value)}
-              onBlur={onWeightsBlur}
-              className="input-field font-mono text-xs"
-              placeholder="-0.125, -0.25, 0.375, 0.875, 0.375, -0.25, -0.125"
-            />
-          </div>
+            </div>
 
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <label className="space-y-1">
-              <span className="text-[11px] text-slate-400">{isTr ? 'Giriş Sinyali (Testbench)' : 'Input Stimulus'}</span>
-              <select
-                value={cfg.stimulus}
-                onChange={(e) => setCfg({ ...cfg, stimulus: e.target.value as EdgeAiConfig['stimulus'] })}
-                className="input-field text-xs py-1.5"
-              >
-                <option value="ecg">{isTr ? 'ECG (QRS + Aritmi)' : 'ECG (QRS + Arrhythmia)'}</option>
-                <option value="eeg">{isTr ? 'EEG (Alpha + Epileptik Diken)' : 'EEG (Alpha + Seizure Spike)'}</option>
-                <option value="sine_noise">{isTr ? 'Sinüs + Yüksek Frekans Gürültü' : 'Sine + HF Noise'}</option>
-                <option value="custom">{isTr ? 'Kendi Sinyal Verim (Özel Dizi)' : 'My Custom Signal Array'}</option>
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="text-[11px] text-slate-400">{isTr ? 'Donanım Aktivasyonu' : 'Hardware Activation'}</span>
-              <select
-                value={cfg.activation}
-                onChange={(e) => setCfg({ ...cfg, activation: e.target.value as EdgeAiConfig['activation'] })}
-                className="input-field text-xs py-1.5"
-              >
-                <option value="relu">ReLU (Sign-bit Mux)</option>
-                <option value="leaky_relu">Leaky ReLU (x &gt;&gt;&gt; 3)</option>
-                <option value="sigmoid_lut">Sigmoid (PWL Shift-Add)</option>
-                <option value="none">{isTr ? 'Yok (Doğrusal FIR)' : 'None (Linear FIR)'}</option>
-              </select>
-            </label>
-          </div>
-
-          {cfg.stimulus === 'custom' && (
+            {/* Float32 Weights Input */}
             <div className="space-y-1">
-              <label className="text-[11px] text-emerald-300">
-                {isTr ? 'Özel Testbench Giriş Sinyali Örnekleri (virgülle)' : 'Custom Testbench Input Samples (comma-separated)'}
+              <label className="text-[11px] text-slate-400 font-medium">
+                {isTr ? 'Float32 Ağırlık Dizisi (Virgülle Ayrılmış)' : 'Float32 Weights (Comma-Separated)'}
               </label>
               <textarea
                 rows={2}
-                value={customSignalText}
-                onChange={(e) => setCustomSignalText(e.target.value)}
-                onBlur={onCustomSignalBlur}
+                value={weightsText}
+                onChange={(e) => setWeightsText(e.target.value)}
+                onBlur={onWeightsBlur}
                 className="input-field font-mono text-xs"
-                placeholder="0.1, 0.25, 0.85, -0.2, 0.05, ..."
+                placeholder="-0.125, -0.25, 0.375, 0.875, 0.375, -0.25, -0.125"
               />
             </div>
-          )}
-          {/* PyTorch / Keras BatchNorm1d Folding Engine */}
-          <div className="bg-darker/90 border border-slate-800 rounded-lg p-2.5 space-y-2 text-xs">
-            <label className="flex items-center justify-between cursor-pointer">
-              <span className="font-medium text-indigo-300 flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5" />
-                {isTr ? 'PyTorch BatchNorm1d Katlama (Fold into Conv1D)' : 'Fold PyTorch BatchNorm1d into Conv1D'}
-              </span>
-              <input
-                type="checkbox"
-                checked={!!cfg.bn_enabled}
-                onChange={(e) => setCfg({ ...cfg, bn_enabled: e.target.checked })}
-                className="accent-indigo-500"
-              />
-            </label>
-            {cfg.bn_enabled && (
-              <div className="grid grid-cols-4 gap-1.5 pt-1 text-[11px] font-mono">
-                <label className="space-y-0.5">
-                  <span className="text-slate-400">γ (gamma)</span>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={cfg.bn_gamma ?? 1.0}
-                    onChange={(e) => setCfg({ ...cfg, bn_gamma: Number(e.target.value) })}
-                    className="input-field text-[11px] py-1"
-                  />
-                </label>
-                <label className="space-y-0.5">
-                  <span className="text-slate-400">β (beta)</span>
-                  <input
-                    type="number"
-                    step="0.05"
-                    value={cfg.bn_beta ?? 0.0}
-                    onChange={(e) => setCfg({ ...cfg, bn_beta: Number(e.target.value) })}
-                    className="input-field text-[11px] py-1"
-                  />
-                </label>
-                <label className="space-y-0.5">
-                  <span className="text-slate-400">μ (mean)</span>
-                  <input
-                    type="number"
-                    step="0.05"
-                    value={cfg.bn_mean ?? 0.0}
-                    onChange={(e) => setCfg({ ...cfg, bn_mean: Number(e.target.value) })}
-                    className="input-field text-[11px] py-1"
-                  />
-                </label>
-                <label className="space-y-0.5">
-                  <span className="text-slate-400">σ² (var)</span>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0.001"
-                    value={cfg.bn_var ?? 1.0}
-                    onChange={(e) => setCfg({ ...cfg, bn_var: Math.max(0.0001, Number(e.target.value) || 1.0) })}
-                    className="input-field text-[11px] py-1"
-                  />
-                </label>
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* Column 2: Fixed-Point Qm.n & Bit-Growth */}
-        <div className="card space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-              <Code2 className="w-4 h-4 text-emerald-400" />
-              {isTr ? '2. Sabit Nokta (Qm.n) & Bit-Genişleme' : '2. Fixed-Point (Qm.n) & Bit-Growth'}
-            </span>
-            {analysis && (
-              <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono text-xs font-bold">
-                {analysis.q_format} ({analysis.total_bits}-bit)
-              </span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            <label className="space-y-1">
-              <div className="flex justify-between text-[11px] text-slate-400">
-                <span>{isTr ? 'Tam Sayı Biti (m)' : 'Integer Bits (m)'}</span>
-                <span className="font-mono text-slate-200">{cfg.int_bits} bit</span>
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={8}
-                value={cfg.int_bits}
-                onChange={(e) => setCfg({ ...cfg, int_bits: Number(e.target.value) })}
-                className="w-full accent-indigo-500"
-              />
-            </label>
-
-            <label className="space-y-1">
-              <div className="flex justify-between text-[11px] text-slate-400">
-                <span>{isTr ? 'Kesir Biti (n)' : 'Fractional Bits (n)'}</span>
-                <span className="font-mono text-slate-200">{cfg.frac_bits} bit</span>
-              </div>
-              <input
-                type="range"
-                min={2}
-                max={14}
-                value={cfg.frac_bits}
-                onChange={(e) => setCfg({ ...cfg, frac_bits: Number(e.target.value) })}
-                className="w-full accent-emerald-500"
-              />
-            </label>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <label className="space-y-1">
-              <span className="text-[11px] text-slate-400">{isTr ? 'Yuvarlama Modu' : 'Rounding Mode'}</span>
-              <select
-                value={cfg.rounding}
-                onChange={(e) => setCfg({ ...cfg, rounding: e.target.value as EdgeAiConfig['rounding'] })}
-                className="input-field text-xs py-1.5"
-              >
-                <option value="round">{isTr ? 'Round-Half-Up (+0.5 LSB)' : 'Round-Half-Up (+0.5 LSB)'}</option>
-                <option value="rne">{isTr ? 'Yakınsak / Çifte Yuvarla (RNE - IEEE)' : 'Round-to-Nearest-Even (RNE)'}</option>
-                <option value="trunc">{isTr ? 'Doğrudan Kesme (Truncate)' : 'Direct Truncation'}</option>
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="text-[11px] text-slate-400">{isTr ? 'Taşma (Overflow) Modu' : 'Overflow Mode'}</span>
-              <select
-                value={cfg.overflow_mode ?? 'saturate'}
-                onChange={(e) => setCfg({ ...cfg, overflow_mode: e.target.value as EdgeAiConfig['overflow_mode'] })}
-                className="input-field text-xs py-1.5"
-              >
-                <option value="saturate">{isTr ? 'Doyma / Clamping (Saturate)' : 'Saturate (Clamping)'}</option>
-                <option value="wrap">{isTr ? '2\'s Complement Wrap-Around' : 'Wrap-Around (No Clamp)'}</option>
-              </select>
-            </label>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <label className="space-y-1">
-              <span className="text-[11px] text-slate-400">{isTr ? 'Donanım Mimarisi (RTL)' : 'Hardware Architecture'}</span>
-              <select
-                value={cfg.arch_mode ?? 'parallel'}
-                onChange={(e) => setCfg({ ...cfg, arch_mode: e.target.value as EdgeAiConfig['arch_mode'] })}
-                className="input-field text-xs py-1.5"
-              >
-                <option value="parallel">{isTr ? 'Paralel Çarpıcı Ağacı (1-Cycle)' : 'Parallel Adder Tree (1-Cycle)'}</option>
-                <option value="bram_rom">{isTr ? 'BRAM / LUTRAM ($readmemh .mem)' : 'BRAM / LUTRAM ($readmemh .mem)'}</option>
-                <option value="serial_folded">{isTr ? 'Zaman-Çoğullamalı Seri MAC (1 PE)' : 'Time-Multiplexed Serial MAC'}</option>
-              </select>
-            </label>
-            <label className="space-y-1">
-              <span className="text-[11px] text-slate-400">{isTr ? 'Anomali Eşiği (Threshold)' : 'Anomaly Threshold'}</span>
-              <input
-                type="number"
-                step="0.05"
-                value={cfg.threshold}
-                onChange={(e) => setCfg({ ...cfg, threshold: Number(e.target.value) || 0.3 })}
-                className="input-field text-xs py-1.5 font-mono"
-              />
-            </label>
-          </div>
-
-          {analysis && (
-            <div className="bg-darker/90 border border-slate-800 rounded-lg p-2.5 space-y-1.5 text-[11px] font-mono">
-              <div className="text-slate-400 flex justify-between">
-                <span>{isTr ? 'Temsil Aralığı:' : 'Dynamic Range:'}</span>
-                <span className="text-slate-200">[{analysis.min_real}, +{analysis.max_real}] (LSB={analysis.lsb_step})</span>
-              </div>
-              <div className="text-slate-400 flex items-center justify-between gap-1 pt-1 border-t border-slate-800">
-                <span className="px-1.5 py-0.5 rounded bg-slate-800 text-sky-300">{analysis.bit_growth.input_q}</span>
-                <ArrowRight className="w-3 h-3 text-slate-500" />
-                <span className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300">{analysis.bit_growth.product_q}</span>
-                <ArrowRight className="w-3 h-3 text-slate-500" />
-                <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-bold">{analysis.bit_growth.acc_q}</span>
-              </div>
-              <div className="text-[10px] text-slate-400">{analysis.bit_growth.formula}</div>
+            {/* Stimulus & Activation */}
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-400">{isTr ? 'Giriş Sinyali' : 'Input Stimulus'}</span>
+                <select
+                  value={cfg.stimulus}
+                  onChange={(e) => setCfg({ ...cfg, stimulus: e.target.value as EdgeAiConfig['stimulus'] })}
+                  className="input-field text-xs py-1.5"
+                >
+                  <option value="ecg">{isTr ? 'ECG (QRS + Aritmi)' : 'ECG (QRS + Arrhythmia)'}</option>
+                  <option value="eeg">{isTr ? 'EEG (Epileptik Diken)' : 'EEG (Alpha + Spike)'}</option>
+                  <option value="sine_noise">{isTr ? 'Sinüs + Gürültü' : 'Sine + Noise'}</option>
+                  <option value="custom">{isTr ? 'Özel Sinyal Dizisi' : 'Custom Signal Array'}</option>
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-400">{isTr ? 'Aktivasyon' : 'Activation'}</span>
+                <select
+                  value={cfg.activation}
+                  onChange={(e) => setCfg({ ...cfg, activation: e.target.value as EdgeAiConfig['activation'] })}
+                  className="input-field text-xs py-1.5"
+                >
+                  <option value="relu">ReLU (Sign-bit Mux)</option>
+                  <option value="leaky_relu">Leaky ReLU (x &gt;&gt;&gt; 3)</option>
+                  <option value="sigmoid_lut">Sigmoid (PWL Shift-Add)</option>
+                  <option value="none">{isTr ? 'Yok (Doğrusal FIR)' : 'None (Linear FIR)'}</option>
+                </select>
+              </label>
             </div>
-          )}
 
-          {analysis?.pareto_front && analysis.pareto_front.length > 0 && (
-            <div className="bg-indigo-950/20 border border-indigo-500/30 rounded-lg p-2.5 space-y-2 text-[11px]">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-indigo-300">
-                  {isTr ? '🎯 Pareto SQNR vs LUT Otomatik Bit-Genişliği Analizi' : '🎯 Pareto SQNR vs LUT Auto-Tuner'}
+            {cfg.stimulus === 'custom' && (
+              <div className="space-y-1">
+                <label className="text-[11px] text-emerald-300">
+                  {isTr ? 'Özel Testbench Giriş Sinyali (virgülle)' : 'Custom Input Signal (comma-separated)'}
+                </label>
+                <textarea
+                  rows={2}
+                  value={customSignalText}
+                  onChange={(e) => setCustomSignalText(e.target.value)}
+                  onBlur={onCustomSignalBlur}
+                  className="input-field font-mono text-xs"
+                  placeholder="0.1, 0.25, 0.85, -0.2, 0.05, ..."
+                />
+              </div>
+            )}
+
+            {/* PyTorch / Keras BatchNorm1d Folding Engine */}
+            <div className="bg-darker/90 border border-slate-800 rounded-lg p-2.5 space-y-2 text-xs">
+              <label className="flex items-center justify-between cursor-pointer">
+                <span className="font-medium text-indigo-300 flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5" />
+                  {isTr ? 'BatchNorm1d Katlama (Fold into Conv1D)' : 'Fold BatchNorm1d into Conv1D'}
                 </span>
-                {(() => {
-                  const rec = analysis.pareto_front.find((p) => p.recommended);
-                  if (!rec) return null;
-                  return (
+                <input
+                  type="checkbox"
+                  checked={!!cfg.bn_enabled}
+                  onChange={(e) => setCfg({ ...cfg, bn_enabled: e.target.checked })}
+                  className="accent-indigo-500"
+                />
+              </label>
+              {cfg.bn_enabled && (
+                <div className="grid grid-cols-4 gap-1.5 pt-1 text-[11px] font-mono">
+                  <label className="space-y-0.5">
+                    <span className="text-slate-400">γ (gamma)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={cfg.bn_gamma ?? 1.0}
+                      onChange={(e) => setCfg({ ...cfg, bn_gamma: Number(e.target.value) })}
+                      className="input-field text-[11px] py-1"
+                    />
+                  </label>
+                  <label className="space-y-0.5">
+                    <span className="text-slate-400">β (beta)</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={cfg.bn_beta ?? 0.0}
+                      onChange={(e) => setCfg({ ...cfg, bn_beta: Number(e.target.value) })}
+                      className="input-field text-[11px] py-1"
+                    />
+                  </label>
+                  <label className="space-y-0.5">
+                    <span className="text-slate-400">μ (mean)</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={cfg.bn_mean ?? 0.0}
+                      onChange={(e) => setCfg({ ...cfg, bn_mean: Number(e.target.value) })}
+                      className="input-field text-[11px] py-1"
+                    />
+                  </label>
+                  <label className="space-y-0.5">
+                    <span className="text-slate-400">σ² (var)</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.001"
+                      value={cfg.bn_var ?? 1.0}
+                      onChange={(e) => setCfg({ ...cfg, bn_var: Math.max(0.0001, Number(e.target.value) || 1.0) })}
+                      className="input-field text-[11px] py-1"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* CARD 2: Sabit Nokta (Qm.n) & Auto-Bit-Growth & Pareto Analizi */}
+        {(activeTab === 'all' || activeTab === 'quant') && (
+          <div className="card space-y-3.5 border-emerald-500/30 bg-slate-900/80">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+              <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-mono text-[11px]">
+                  2
+                </span>
+                {isTr ? 'Sabit Nokta (Qm.n) & Pareto Analizi' : 'Fixed-Point (Qm.n) & Pareto'}
+              </div>
+              {analysis && (
+                <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono text-xs font-bold">
+                  {analysis.q_format} ({analysis.total_bits}-bit)
+                </span>
+              )}
+            </div>
+
+            {/* Sliders for m and n */}
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <label className="space-y-1">
+                <div className="flex justify-between text-[11px] text-slate-400">
+                  <span>{isTr ? 'Tam Sayı Biti (m)' : 'Integer Bits (m)'}</span>
+                  <span className="font-mono text-slate-200">{cfg.int_bits} bit</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={8}
+                  value={cfg.int_bits}
+                  onChange={(e) => setCfg({ ...cfg, int_bits: Number(e.target.value) })}
+                  className="w-full accent-indigo-500"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <div className="flex justify-between text-[11px] text-slate-400">
+                  <span>{isTr ? 'Kesir Biti (n)' : 'Fractional Bits (n)'}</span>
+                  <span className="font-mono text-slate-200">{cfg.frac_bits} bit</span>
+                </div>
+                <input
+                  type="range"
+                  min={2}
+                  max={14}
+                  value={cfg.frac_bits}
+                  onChange={(e) => setCfg({ ...cfg, frac_bits: Number(e.target.value) })}
+                  className="w-full accent-emerald-500"
+                />
+              </label>
+            </div>
+
+            {/* Rounding & Overflow */}
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-400">{isTr ? 'Yuvarlama (Rounding)' : 'Rounding Mode'}</span>
+                <select
+                  value={cfg.rounding}
+                  onChange={(e) => setCfg({ ...cfg, rounding: e.target.value as EdgeAiConfig['rounding'] })}
+                  className="input-field text-xs py-1.5"
+                >
+                  <option value="round">{isTr ? 'Round-Half-Up (+0.5 LSB)' : 'Round-Half-Up (+0.5 LSB)'}</option>
+                  <option value="rne">{isTr ? 'Yakınsak / Çifte Yuvarla (RNE - IEEE)' : 'Round-to-Nearest-Even (RNE)'}</option>
+                  <option value="trunc">{isTr ? 'Doğrudan Kesme (Truncate)' : 'Direct Truncation'}</option>
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-400">{isTr ? 'Taşma (Overflow)' : 'Overflow Mode'}</span>
+                <select
+                  value={cfg.overflow_mode ?? 'saturate'}
+                  onChange={(e) => setCfg({ ...cfg, overflow_mode: e.target.value as EdgeAiConfig['overflow_mode'] })}
+                  className="input-field text-xs py-1.5"
+                >
+                  <option value="saturate">{isTr ? 'Doyma / Clamping (Saturate)' : 'Saturate (Clamping)'}</option>
+                  <option value="wrap">{isTr ? '2\'s Complement Wrap-Around' : 'Wrap-Around (No Clamp)'}</option>
+                </select>
+              </label>
+            </div>
+
+            {/* Dynamic range & Bit-Growth formula */}
+            {analysis && (
+              <div className="bg-darker/90 border border-slate-800 rounded-lg p-2.5 space-y-1.5 text-[11px] font-mono">
+                <div className="text-slate-400 flex justify-between">
+                  <span>{isTr ? 'Dinamik Aralık:' : 'Dynamic Range:'}</span>
+                  <span className="text-slate-200">
+                    [{analysis.min_real}, +{analysis.max_real}] (LSB={analysis.lsb_step})
+                  </span>
+                </div>
+                <div className="text-slate-400 flex items-center justify-between gap-1 pt-1 border-t border-slate-800">
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-sky-300">{analysis.bit_growth.input_q}</span>
+                  <ArrowRight className="w-3 h-3 text-slate-500" />
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300">{analysis.bit_growth.product_q}</span>
+                  <ArrowRight className="w-3 h-3 text-slate-500" />
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-bold">
+                    {analysis.bit_growth.acc_q}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400">{analysis.bit_growth.formula}</div>
+              </div>
+            )}
+
+            {/* Pareto SQNR vs LUT curve with Maximize button */}
+            {analysis?.pareto_front && analysis.pareto_front.length > 0 && (
+              <div className="bg-indigo-950/20 border border-indigo-500/30 rounded-lg p-2.5 space-y-2 text-[11px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-indigo-300 flex items-center gap-1.5">
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    {isTr ? 'Pareto SQNR vs LUT Eğrisi' : 'Pareto SQNR vs LUT'}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {(() => {
+                      const rec = analysis.pareto_front.find((p) => p.recommended);
+                      if (!rec) return null;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setCfg((c) => ({ ...c, int_bits: rec.int_bits, frac_bits: rec.frac_bits }))}
+                          className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[10px] transition"
+                        >
+                          {isTr ? `Oto-Seç: ${rec.q_format}` : `Auto: ${rec.q_format}`}
+                        </button>
+                      );
+                    })()}
                     <button
                       type="button"
-                      onClick={() => setCfg((c) => ({ ...c, int_bits: rec.int_bits, frac_bits: rec.frac_bits }))}
-                      className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[10px] transition"
+                      onClick={() => setMaximizedModal('pareto')}
+                      title="Büyüt / Maximize"
+                      className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition"
                     >
-                      {isTr ? `Oto-Seç: ${rec.q_format} (${rec.inference_sqnr_db} dB)` : `Auto-Tune: ${rec.q_format} (${rec.inference_sqnr_db} dB)`}
+                      <Maximize2 className="w-3.5 h-3.5" />
                     </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 font-mono">
+                  {analysis.pareto_front.map((p) => {
+                    const active = cfg.int_bits === p.int_bits && cfg.frac_bits === p.frac_bits;
+                    return (
+                      <button
+                        key={p.q_format}
+                        type="button"
+                        onClick={() => setCfg((c) => ({ ...c, int_bits: p.int_bits, frac_bits: p.frac_bits }))}
+                        className={`px-2 py-0.5 rounded border text-[10px] transition flex items-center gap-1 ${
+                          active
+                            ? 'bg-indigo-600/30 border-indigo-400 text-white shadow-glow'
+                            : p.recommended
+                            ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/25'
+                            : 'bg-darker border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                        title={`SQNR: ${p.inference_sqnr_db} dB | ~${p.est_luts} LUT | Clip: ${p.clipped}`}
+                      >
+                        <span>{p.q_format}</span>
+                        <span className={p.inference_sqnr_db >= 30 ? 'text-emerald-400' : 'text-amber-400'}>
+                          {p.inference_sqnr_db}dB
+                        </span>
+                        {p.recommended && <span className="text-emerald-300">★</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Inline Pareto Plot Mini SVG */}
+                {(() => {
+                  const pts = analysis.pareto_front;
+                  const minLut = Math.min(...pts.map((p) => p.est_luts), 10);
+                  const maxLut = Math.max(...pts.map((p) => p.est_luts), minLut + 10);
+                  const minDb = 0;
+                  const maxDb = Math.max(...pts.map((p) => p.inference_sqnr_db), 45);
+                  const W = 320;
+                  const H = 86;
+                  const px = (lut: number) => 26 + ((lut - minLut) / Math.max(1, maxLut - minLut)) * (W - 48);
+                  const py = (db: number) =>
+                    H - 16 - ((Math.min(maxDb, Math.max(minDb, db)) - minDb) / Math.max(1, maxDb - minDb)) * (H - 28);
+                  const sorted = [...pts].sort((a, b) => a.est_luts - b.est_luts);
+                  const linePath = sorted
+                    .map((p, i) => `${i === 0 ? 'M' : 'L'}${px(p.est_luts).toFixed(1)},${py(p.inference_sqnr_db).toFixed(1)}`)
+                    .join(' ');
+                  const y30 = py(30);
+                  return (
+                    <div className="bg-slate-950/80 border border-slate-800/80 rounded p-1.5">
+                      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-20 overflow-visible">
+                        <line
+                          x1={26}
+                          y1={y30}
+                          x2={W - 14}
+                          y2={y30}
+                          stroke="#10b981"
+                          strokeWidth="0.8"
+                          strokeDasharray="3 2"
+                          opacity={0.5}
+                        />
+                        <text x={W - 12} y={y30 + 3} textAnchor="end" className="fill-emerald-400/70 text-[7px] font-mono">
+                          30dB Hedef
+                        </text>
+                        <path d={linePath} fill="none" stroke="#6366f1" strokeWidth="1.3" opacity={0.75} />
+                        {sorted.map((p) => {
+                          const isSel = cfg.int_bits === p.int_bits && cfg.frac_bits === p.frac_bits;
+                          const cx = px(p.est_luts);
+                          const cy = py(p.inference_sqnr_db);
+                          return (
+                            <g
+                              key={p.q_format}
+                              className="cursor-pointer"
+                              onClick={() => setCfg((c) => ({ ...c, int_bits: p.int_bits, frac_bits: p.frac_bits }))}
+                            >
+                              <circle
+                                cx={cx}
+                                cy={cy}
+                                r={isSel ? 4.5 : p.recommended ? 4 : 3}
+                                fill={isSel ? '#38bdf8' : p.recommended ? '#10b981' : '#94a3b8'}
+                                stroke="#0f172a"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x={cx}
+                                y={cy - 5}
+                                textAnchor="middle"
+                                className="fill-slate-300 text-[7px] font-mono"
+                              >
+                                {p.q_format}
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
                   );
                 })()}
               </div>
-              <div className="flex flex-wrap gap-1.5 font-mono">
-                {analysis.pareto_front.map((p) => {
-                  const active = cfg.int_bits === p.int_bits && cfg.frac_bits === p.frac_bits;
-                  return (
-                    <button
-                      key={p.q_format}
-                      type="button"
-                      onClick={() => setCfg((c) => ({ ...c, int_bits: p.int_bits, frac_bits: p.frac_bits }))}
-                      className={`px-2 py-1 rounded border text-[10px] transition flex items-center gap-1 ${
-                        active
-                          ? 'bg-indigo-600/30 border-indigo-400 text-white'
-                          : p.recommended
-                          ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/25'
-                          : 'bg-darker border-slate-800 text-slate-400 hover:text-slate-200'
-                      }`}
-                      title={`SQNR: ${p.inference_sqnr_db} dB | ~${p.est_luts} LUT | Clip: ${p.clipped}`}
-                    >
-                      <span>{p.q_format}</span>
-                      <span className={p.inference_sqnr_db >= 30 ? 'text-emerald-400' : 'text-amber-400'}>
-                        {p.inference_sqnr_db}dB
-                      </span>
-                      <span className="text-slate-500">({p.est_luts}L)</span>
-                      {p.recommended && <span className="text-emerald-300">★</span>}
-                    </button>
-                  );
-                })}
+            )}
+          </div>
+        )}
+
+        {/* CARD 3: Donanım Roofline & FPGA DSP48 Cliff & RTL Sentezleyici */}
+        {(activeTab === 'all' || activeTab === 'hw') && (
+          <div className="card space-y-3.5 border-amber-500/30 bg-slate-900/80">
+            <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+              <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-mono text-[11px]">
+                  3
+                </span>
+                {isTr ? 'Donanım Roofline & DSP48 Kaynak Tahmini' : 'Hardware Roofline & DSP48 Silicon'}
               </div>
-              {(() => {
-                const pts = analysis.pareto_front;
-                const minLut = Math.min(...pts.map((p) => p.est_luts), 10);
-                const maxLut = Math.max(...pts.map((p) => p.est_luts), minLut + 10);
-                const minDb = 0;
-                const maxDb = Math.max(...pts.map((p) => p.inference_sqnr_db), 45);
-                const W = 320;
-                const H = 86;
-                const px = (lut: number) => 26 + ((lut - minLut) / Math.max(1, maxLut - minLut)) * (W - 48);
-                const py = (db: number) => H - 16 - ((Math.min(maxDb, Math.max(minDb, db)) - minDb) / Math.max(1, maxDb - minDb)) * (H - 28);
-                const sorted = [...pts].sort((a, b) => a.est_luts - b.est_luts);
-                const linePath = sorted.map((p, i) => `${i === 0 ? 'M' : 'L'}${px(p.est_luts).toFixed(1)},${py(p.inference_sqnr_db).toFixed(1)}`).join(' ');
-                const y30 = py(30);
-                return (
-                  <div className="bg-slate-950/80 border border-slate-800/80 rounded p-1.5">
-                    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-20 overflow-visible">
-                      <line x1={26} y1={y30} x2={W - 14} y2={y30} stroke="#10b981" strokeWidth="0.8" strokeDasharray="3 2" opacity={0.5} />
-                      <text x={W - 12} y={y30 + 3} textAnchor="end" className="fill-emerald-400/70 text-[7px] font-mono">30dB Hedef</text>
-                      <path d={linePath} fill="none" stroke="#6366f1" strokeWidth="1.3" opacity={0.75} />
-                      {sorted.map((p) => {
-                        const isSel = cfg.int_bits === p.int_bits && cfg.frac_bits === p.frac_bits;
-                        const cx = px(p.est_luts);
-                        const cy = py(p.inference_sqnr_db);
-                        return (
-                          <g
-                            key={p.q_format}
-                            className="cursor-pointer"
-                            onClick={() => setCfg((c) => ({ ...c, int_bits: p.int_bits, frac_bits: p.frac_bits }))}
-                          >
-                            <circle
-                              cx={cx}
-                              cy={cy}
-                              r={isSel ? 4.5 : p.recommended ? 4 : 3}
-                              fill={isSel ? '#38bdf8' : p.recommended ? '#10b981' : '#94a3b8'}
-                              stroke="#0f172a"
-                              strokeWidth="1"
-                            />
-                            <text x={cx} y={cy - 5} textAnchor="middle" className="fill-slate-300 text-[7px] font-mono">
-                              {p.q_format}
-                            </text>
-                          </g>
-                        );
-                      })}
-                    </svg>
-                  </div>
-                );
-              })()}
+              <span className="text-[10px] text-slate-400 font-mono">{cfg.clock_mhz} MHz</span>
             </div>
-          )}
-        </div>
 
-        {/* Column 3: Roofline & Silicon Resource Estimator */}
-        <div className="card space-y-3">
-          <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-            <Cpu className="w-4 h-4 text-amber-400" />
-            {isTr ? '3. Donanım Roofline & FPGA Kaynak Tahmini' : '3. Hardware Roofline & FPGA Silicon Estimate'}
+            {/* Architecture & Clock Controls */}
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-400">{isTr ? 'Hedef Saat (MHz)' : 'Target Clock (MHz)'}</span>
+                <input
+                  type="number"
+                  min={10}
+                  max={500}
+                  value={cfg.clock_mhz}
+                  onChange={(e) => setCfg({ ...cfg, clock_mhz: Number(e.target.value) || 100 })}
+                  className="input-field text-xs py-1.5 font-mono"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-400">{isTr ? 'Reuse Factor (Zaman Çoğullama)' : 'Reuse Factor'}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={cfg.reuse_factor}
+                  onChange={(e) => setCfg({ ...cfg, reuse_factor: Math.max(1, Number(e.target.value) || 1) })}
+                  className="input-field text-xs py-1.5 font-mono"
+                />
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-400">{isTr ? 'RTL Mimarisi' : 'RTL Architecture'}</span>
+                <select
+                  value={cfg.arch_mode ?? 'parallel'}
+                  onChange={(e) => setCfg({ ...cfg, arch_mode: e.target.value as EdgeAiConfig['arch_mode'] })}
+                  className="input-field text-xs py-1.5"
+                >
+                  <option value="parallel">{isTr ? 'Paralel Çarpıcı Ağacı (1-Cycle)' : 'Parallel Adder Tree (1-Cycle)'}</option>
+                  <option value="bram_rom">{isTr ? 'BRAM / LUTRAM ($readmemh .mem)' : 'BRAM / LUTRAM ($readmemh .mem)'}</option>
+                  <option value="serial_folded">{isTr ? 'Zaman-Çoğullamalı Seri MAC (1 PE)' : 'Time-Multiplexed Serial MAC'}</option>
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] text-slate-400">{isTr ? 'Anomali Eşiği' : 'Anomaly Threshold'}</span>
+                <input
+                  type="number"
+                  step="0.05"
+                  value={cfg.threshold}
+                  onChange={(e) => setCfg({ ...cfg, threshold: Number(e.target.value) || 0.3 })}
+                  className="input-field text-xs py-1.5 font-mono"
+                />
+              </label>
+            </div>
+
+            {/* Roofline KPI Cards */}
+            {analysis && (
+              <>
+                <div className="grid grid-cols-3 gap-2 text-center font-mono">
+                  <div className="bg-darker border border-slate-800 rounded p-2">
+                    <div className="text-sm font-bold text-sky-300">{analysis.roofline.latency_ns} ns</div>
+                    <div className="text-[10px] text-slate-400">{isTr ? 'Gecikme' : 'Latency'}</div>
+                  </div>
+                  <div className="bg-darker border border-slate-800 rounded p-2">
+                    <div className="text-sm font-bold text-emerald-300">{analysis.roofline.dsp_blocks} DSP48</div>
+                    <div className="text-[10px] text-slate-400">~{analysis.roofline.est_luts} LUT</div>
+                  </div>
+                  <div className="bg-darker border border-slate-800 rounded p-2">
+                    <div className="text-sm font-bold text-indigo-300">{analysis.roofline.gops} GOPS</div>
+                    <div className="text-[10px] text-slate-400">{analysis.roofline.throughput_msps} MS/s</div>
+                  </div>
+                </div>
+
+                {/* FPGA DSP48 Usage Progress Bar */}
+                <div className="bg-darker/90 border border-slate-800 rounded-lg p-2.5 space-y-1.5 text-xs font-mono">
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-slate-400 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      {isTr ? 'FPGA DSP48 Dilim Kullanımı:' : 'FPGA DSP48 Slice Usage:'}
+                    </span>
+                    <span className="font-bold text-slate-200">
+                      {dspUsed} / {dspTotal} DSP Blocks ({dspPct}%)
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        dspPct > 90 ? 'bg-red-500' : dspPct > 60 ? 'bg-amber-400' : 'bg-emerald-400'
+                      }`}
+                      style={{ width: `${dspPct}%` }}
+                    />
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-slate-400 bg-darker/70 border border-slate-800 rounded p-2 leading-snug">
+                  {analysis.roofline.dsp_note}
+                </p>
+              </>
+            )}
           </div>
-
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <label className="space-y-1">
-              <span className="text-[11px] text-slate-400">{isTr ? 'Hedef Saat (MHz)' : 'Target Clock (MHz)'}</span>
-              <input
-                type="number"
-                min={10}
-                max={500}
-                value={cfg.clock_mhz}
-                onChange={(e) => setCfg({ ...cfg, clock_mhz: Number(e.target.value) || 100 })}
-                className="input-field text-xs py-1.5 font-mono"
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-[11px] text-slate-400">{isTr ? 'Reuse Factor (Zaman Çoğullama)' : 'Reuse Factor (Folding)'}</span>
-              <input
-                type="number"
-                min={1}
-                max={8}
-                value={cfg.reuse_factor}
-                onChange={(e) => setCfg({ ...cfg, reuse_factor: Math.max(1, Number(e.target.value) || 1) })}
-                className="input-field text-xs py-1.5 font-mono"
-              />
-            </label>
-          </div>
-
-          {analysis && (
-            <>
-              <div className="grid grid-cols-3 gap-2 text-center font-mono">
-                <div className="bg-darker border border-slate-800 rounded p-2">
-                  <div className="text-sm font-bold text-sky-300">{analysis.roofline.latency_ns} ns</div>
-                  <div className="text-[10px] text-slate-400">{isTr ? 'Gecikme' : 'Latency'}</div>
-                </div>
-                <div className="bg-darker border border-slate-800 rounded p-2">
-                  <div className="text-sm font-bold text-emerald-300">{analysis.roofline.dsp_blocks} DSP48</div>
-                  <div className="text-[10px] text-slate-400">~{analysis.roofline.est_luts} LUT</div>
-                </div>
-                <div className="bg-darker border border-slate-800 rounded p-2">
-                  <div className="text-sm font-bold text-indigo-300">{analysis.roofline.gops} GOPS</div>
-                  <div className="text-[10px] text-slate-400">{analysis.roofline.throughput_msps} MS/s</div>
-                </div>
-              </div>
-              <p className="text-[11px] text-slate-400 bg-darker/70 border border-slate-800 rounded p-2 leading-snug">
-                {analysis.roofline.dsp_note}
-              </p>
-            </>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* Quantization SQNR & Plots */}
+      {/* Quantization SQNR KPI Badges */}
       {analysis && (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className={`rounded-lg border p-3 flex items-center justify-between ${sqnrBadge(analysis.weight_sqnr_db)}`}>
-              <div>
-                <div className="text-[11px] uppercase font-mono opacity-80">{isTr ? 'Ağırlık Niceleme SQNR' : 'Weight Quantization SQNR'}</div>
-                <div className="text-xl font-bold font-mono">{analysis.weight_sqnr_db} dB</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className={`rounded-xl border p-3 flex items-center justify-between ${sqnrBadge(analysis.weight_sqnr_db)}`}>
+            <div>
+              <div className="text-[11px] uppercase font-mono opacity-80">
+                {isTr ? 'Ağırlık Niceleme SQNR' : 'Weight Quantization SQNR'}
               </div>
-              <span className="text-xs font-mono">MaxErr: {analysis.weight_max_err}</span>
+              <div className="text-xl font-bold font-mono">{analysis.weight_sqnr_db} dB</div>
             </div>
-
-            <div className={`rounded-lg border p-3 flex items-center justify-between ${sqnrBadge(analysis.inference_sqnr_db)}`}>
-              <div>
-                <div className="text-[11px] uppercase font-mono opacity-80">{isTr ? 'Uçtan Uca Çıkarım SQNR' : 'End-to-End Inference SQNR'}</div>
-                <div className="text-xl font-bold font-mono">{analysis.inference_sqnr_db} dB</div>
-              </div>
-              <span className="text-xs font-mono">{analysis.series.anomaly_indices.length} spike trigger</span>
-            </div>
-
-            <div
-              className={`rounded-lg border p-3 flex items-center justify-between ${
-                analysis.clipped_weights > 0
-                  ? 'bg-red-500/15 text-red-300 border-red-500/40'
-                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
-              }`}
-            >
-              <div>
-                <div className="text-[11px] uppercase font-mono opacity-80">{isTr ? 'Doyma / Kırpılma (Clipping)' : 'Weight Clipping Risk'}</div>
-                <div className="text-xl font-bold font-mono">
-                  {analysis.clipped_weights > 0
-                    ? `${analysis.clipped_weights} ${isTr ? 'Ağırlık Taştı!' : 'Clipped!'}`
-                    : isTr
-                    ? '0 Taşma (Güvenli)'
-                    : '0 Clipped (Safe)'}
-                </div>
-              </div>
-              {analysis.clipped_weights > 0 ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
-            </div>
+            <span className="text-xs font-mono">MaxErr: {analysis.weight_max_err}</span>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <SignalPlot
-              title={
-                isTr
-                  ? `Giriş Biyosinyali (${analysis.series.stimulus.toUpperCase()} — ${analysis.series.input_float.length} Örnek)`
-                  : `Input Biosignal (${analysis.series.stimulus.toUpperCase()} — ${analysis.series.input_float.length} Samples)`
-              }
-              primary={analysis.series.input_float}
-              secondary={analysis.series.input_q_float}
-              primaryLabel="Float32"
-              secondaryLabel={`Quantized ${analysis.q_format}`}
-            />
-            <SignalPlot
-              title={
-                isTr
-                  ? '1D-CNN Donanım Çıkışı (Float64 Referans vs Bit-Doğru RTL Çıkışı & Anomali Tetikleme)'
-                  : '1D-CNN Hardware Feature Map (Float64 Ref vs Bit-Exact Fixed-Point RTL & Anomaly Trigger)'
-              }
-              primary={analysis.series.output_fp}
-              secondary={analysis.series.output_fx_float}
-              primaryLabel="PyTorch/Float64 Ref"
-              secondaryLabel={`Bit-Exact RTL (${analysis.q_format})`}
-              threshold={analysis.threshold_float}
-              anomalies={analysis.series.anomaly_indices}
-            />
+          <div
+            className={`rounded-xl border p-3 flex items-center justify-between ${sqnrBadge(analysis.inference_sqnr_db)}`}
+          >
+            <div>
+              <div className="text-[11px] uppercase font-mono opacity-80">
+                {isTr ? 'Uçtan Uca Çıkarım SQNR' : 'End-to-End Inference SQNR'}
+              </div>
+              <div className="text-xl font-bold font-mono">{analysis.inference_sqnr_db} dB</div>
+            </div>
+            <span className="text-xs font-mono">{analysis.series.anomaly_indices.length} spike trigger</span>
           </div>
 
-          {/* Quantized Weight ROM Table & FPGA Memory Exporters (.mem / .coe) */}
-          <div className="card space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs font-semibold text-slate-200">
-                {isTr
-                  ? `Niceleme Tablosu & SystemVerilog Ağırlık ROM Sabitleri (${analysis.q_format})`
-                  : `Quantized Weight Table & SystemVerilog ROM Constants (${analysis.q_format})`}
+          <div
+            className={`rounded-xl border p-3 flex items-center justify-between ${
+              analysis.clipped_weights > 0
+                ? 'bg-red-500/15 text-red-300 border-red-500/40'
+                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+            }`}
+          >
+            <div>
+              <div className="text-[11px] uppercase font-mono opacity-80">
+                {isTr ? 'Doyma / Kırpılma (Clipping)' : 'Weight Clipping Risk'}
               </div>
+              <div className="text-xl font-bold font-mono">
+                {analysis.clipped_weights > 0
+                  ? `${analysis.clipped_weights} ${isTr ? 'Ağırlık Taştı!' : 'Clipped!'}`
+                  : isTr
+                  ? '0 Taşma (Güvenli)'
+                  : '0 Clipped (Safe)'}
+              </div>
+            </div>
+            {analysis.clipped_weights > 0 ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+          </div>
+        </div>
+      )}
+
+      {/* Biosignal Waveform Plots (Side-by-Side or Stacked with Maximize Modal support) */}
+      {analysis && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <SignalPlot
+            title={
+              isTr
+                ? `Giriş Biyosinyali (${analysis.series.stimulus.toUpperCase()} — ${analysis.series.input_float.length} Örnek)`
+                : `Input Biosignal (${analysis.series.stimulus.toUpperCase()} — ${analysis.series.input_float.length} Samples)`
+            }
+            primary={analysis.series.input_float}
+            secondary={analysis.series.input_q_float}
+            primaryLabel="Float32"
+            secondaryLabel={`Quantized ${analysis.q_format}`}
+            onMaximize={() => setMaximizedModal('biosignal')}
+          />
+          <SignalPlot
+            title={
+              isTr
+                ? '1D-CNN Donanım Çıkışı (Float64 vs Bit-Doğru RTL Çıkışı & Anomali Tetikleme)'
+                : '1D-CNN Hardware Output (Float64 Ref vs Bit-Exact RTL & Anomaly Trigger)'
+            }
+            primary={analysis.series.output_fp}
+            secondary={analysis.series.output_fx_float}
+            primaryLabel="PyTorch Ref"
+            secondaryLabel={`Bit-Exact RTL (${analysis.q_format})`}
+            threshold={analysis.threshold_float}
+            anomalies={analysis.series.anomaly_indices}
+            onMaximize={() => setMaximizedModal('biosignal')}
+          />
+        </div>
+      )}
+
+      {/* Quantized Weight ROM Table & Exporters */}
+      {analysis && (
+        <div className="card space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-slate-200">
+              {isTr
+                ? `Niceleme Tablosu & SystemVerilog Ağırlık ROM Sabitleri (${analysis.q_format})`
+                : `Quantized Weight Table & SystemVerilog ROM Constants (${analysis.q_format})`}
+            </div>
+            <div className="flex items-center gap-2">
+              {analysis.mem_content && (
+                <button
+                  type="button"
+                  onClick={() => downloadTextFile('weights_rom.mem', analysis.mem_content!)}
+                  className="px-2.5 py-1 rounded bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 text-[11px] font-mono flex items-center gap-1"
+                  title="SystemVerilog $readmemh"
+                >
+                  <Download className="w-3 h-3" /> weights_rom.mem ($readmemh)
+                </button>
+              )}
+              {analysis.coe_content && (
+                <button
+                  type="button"
+                  onClick={() => downloadTextFile('weights_rom.coe', analysis.coe_content!)}
+                  className="px-2.5 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-[11px] font-mono flex items-center gap-1"
+                  title="Xilinx Vivado BRAM"
+                >
+                  <Download className="w-3 h-3" /> weights_rom.coe (Vivado BRAM)
+                </button>
+              )}
+              {analysis.python_export_script && (
+                <button
+                  type="button"
+                  onClick={() => downloadTextFile('export_to_circuitvr.py', analysis.python_export_script!)}
+                  className="px-2.5 py-1 rounded bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-indigo-300 text-[11px] font-mono flex items-center gap-1"
+                >
+                  <Download className="w-3 h-3" /> export_to_circuitvr.py
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs font-mono border-collapse">
+              <thead>
+                <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
+                  <th className="py-1.5 px-2">Tap</th>
+                  <th className="py-1.5 px-2">Float32</th>
+                  <th className="py-1.5 px-2">Quantized ({analysis.q_format})</th>
+                  <th className="py-1.5 px-2">Int ({analysis.total_bits}-bit)</th>
+                  <th className="py-1.5 px-2">|Error|</th>
+                  <th className="py-1.5 px-2">Hex (2's Comp)</th>
+                  <th className="py-1.5 px-2">SystemVerilog Literal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {analysis.weights_table.map((w) => (
+                  <tr key={w.index} className="border-b border-slate-800/60 hover:bg-slate-800/40">
+                    <td className="py-1 px-2 text-indigo-300">W_{w.index}</td>
+                    <td className="py-1 px-2 text-slate-300">{w.float_val}</td>
+                    <td className="py-1 px-2 text-emerald-300">{w.quant_float}</td>
+                    <td className="py-1 px-2 text-amber-300">{w.quant_int}</td>
+                    <td className="py-1 px-2 text-slate-400">{w.abs_err}</td>
+                    <td className="py-1 px-2 text-sky-300">{w.hex}</td>
+                    <td className="py-1 px-2 text-pink-300">{w.sv_lit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* MAXIMIZE MODAL: PARETO SQNR VS LUT */}
+      {maximizedModal === 'pareto' && analysis?.pareto_front && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                {analysis.mem_content && (
-                  <button
-                    type="button"
-                    onClick={() => downloadTextFile('weights_rom.mem', analysis.mem_content!)}
-                    className="px-2.5 py-1 rounded bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 text-[11px] font-mono flex items-center gap-1"
-                    title={isTr ? 'SystemVerilog $readmemh için 2\'s complement Hex bellek dosyasını indir' : 'Download $readmemh .mem file'}
-                  >
-                    <Download className="w-3 h-3" /> weights_rom.mem ($readmemh)
-                  </button>
-                )}
-                {analysis.coe_content && (
-                  <button
-                    type="button"
-                    onClick={() => downloadTextFile('weights_rom.coe', analysis.coe_content!)}
-                    className="px-2.5 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-[11px] font-mono flex items-center gap-1"
-                    title={isTr ? 'Xilinx Vivado Block Memory Generator (.coe) dosyasını indir' : 'Download Xilinx Vivado BRAM .coe file'}
-                  >
-                    <Download className="w-3 h-3" /> weights_rom.coe (Vivado BRAM)
-                  </button>
-                )}
-                {analysis.python_export_script && (
-                  <button
-                    type="button"
-                    onClick={() => downloadTextFile('export_to_circuitvr.py', analysis.python_export_script!)}
-                    className="px-2.5 py-1 rounded bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-indigo-300 text-[11px] font-mono flex items-center gap-1"
-                  >
-                    <Download className="w-3 h-3" /> export_to_circuitvr.py
-                  </button>
-                )}
+                <BarChart3 className="w-5 h-5 text-indigo-400" />
+                <h3 className="font-bold text-base text-slate-100">
+                  {isTr ? 'Tam Ekran Pareto SQNR vs LUT Tasarım Uzayı Analizi' : 'Full Screen Pareto SQNR vs LUT Design Space'}
+                </h3>
               </div>
+              <button
+                type="button"
+                onClick={() => setMaximizedModal(null)}
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <div className="overflow-x-auto">
+
+            {/* Enlarged Pareto SVG */}
+            {(() => {
+              const pts = analysis.pareto_front;
+              const minLut = Math.min(...pts.map((p) => p.est_luts), 10);
+              const maxLut = Math.max(...pts.map((p) => p.est_luts), minLut + 10);
+              const minDb = 0;
+              const maxDb = Math.max(...pts.map((p) => p.inference_sqnr_db), 45);
+              const W = 700;
+              const H = 220;
+              const px = (lut: number) => 40 + ((lut - minLut) / Math.max(1, maxLut - minLut)) * (W - 80);
+              const py = (db: number) =>
+                H - 30 - ((Math.min(maxDb, Math.max(minDb, db)) - minDb) / Math.max(1, maxDb - minDb)) * (H - 50);
+              const sorted = [...pts].sort((a, b) => a.est_luts - b.est_luts);
+              const linePath = sorted
+                .map((p, i) => `${i === 0 ? 'M' : 'L'}${px(p.est_luts).toFixed(1)},${py(p.inference_sqnr_db).toFixed(1)}`)
+                .join(' ');
+              const y30 = py(30);
+
+              return (
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
+                  <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-56 overflow-visible">
+                    <line x1={40} y1={y30} x2={W - 40} y2={y30} stroke="#10b981" strokeWidth="1.2" strokeDasharray="4 3" />
+                    <text x={W - 35} y={y30 + 4} textAnchor="start" className="fill-emerald-400 text-[10px] font-mono">
+                      30 dB Hedef
+                    </text>
+                    <path d={linePath} fill="none" stroke="#6366f1" strokeWidth="2" />
+                    {sorted.map((p) => {
+                      const isSel = cfg.int_bits === p.int_bits && cfg.frac_bits === p.frac_bits;
+                      const cx = px(p.est_luts);
+                      const cy = py(p.inference_sqnr_db);
+                      return (
+                        <g
+                          key={p.q_format}
+                          className="cursor-pointer"
+                          onClick={() => {
+                            setCfg((c) => ({ ...c, int_bits: p.int_bits, frac_bits: p.frac_bits }));
+                            setMaximizedModal(null);
+                          }}
+                        >
+                          <circle
+                            cx={cx}
+                            cy={cy}
+                            r={isSel ? 6.5 : p.recommended ? 5.5 : 4}
+                            fill={isSel ? '#38bdf8' : p.recommended ? '#10b981' : '#94a3b8'}
+                            stroke="#0f172a"
+                            strokeWidth="1.5"
+                          />
+                          <text x={cx} y={cy - 8} textAnchor="middle" className="fill-slate-200 text-[9px] font-mono font-bold">
+                            {p.q_format}
+                          </text>
+                          <text x={cx} y={cy + 14} textAnchor="middle" className="fill-slate-400 text-[8px] font-mono">
+                            {p.inference_sqnr_db}dB ({p.est_luts}L)
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+              );
+            })()}
+
+            {/* Data Table */}
+            <div className="overflow-x-auto max-h-48">
               <table className="w-full text-left text-xs font-mono border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                    <th className="py-1.5 px-2">Tap</th>
-                    <th className="py-1.5 px-2">Float32</th>
-                    <th className="py-1.5 px-2">Quantized ({analysis.q_format})</th>
-                    <th className="py-1.5 px-2">Int ({analysis.total_bits}-bit)</th>
-                    <th className="py-1.5 px-2">|Error|</th>
-                    <th className="py-1.5 px-2">Hex (2's Comp)</th>
-                    <th className="py-1.5 px-2">SystemVerilog Literal</th>
+                  <tr className="border-b border-slate-800 text-slate-400">
+                    <th className="py-1.5 px-3">Format</th>
+                    <th className="py-1.5 px-3">Bits (m.n)</th>
+                    <th className="py-1.5 px-3">SQNR (dB)</th>
+                    <th className="py-1.5 px-3">Est. LUTs</th>
+                    <th className="py-1.5 px-3">Clipped</th>
+                    <th className="py-1.5 px-3">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {analysis.weights_table.map((w) => (
-                    <tr key={w.index} className="border-b border-slate-800/60 hover:bg-slate-800/40">
-                      <td className="py-1 px-2 text-indigo-300">W_{w.index}</td>
-                      <td className="py-1 px-2 text-slate-300">{w.float_val}</td>
-                      <td className="py-1 px-2 text-emerald-300">{w.quant_float}</td>
-                      <td className="py-1 px-2 text-amber-300">{w.quant_int}</td>
-                      <td className="py-1 px-2 text-slate-400">{w.abs_err}</td>
-                      <td className="py-1 px-2 text-sky-300">{w.hex}</td>
-                      <td className="py-1 px-2 text-pink-300">{w.sv_lit}</td>
-                    </tr>
-                  ))}
+                  {analysis.pareto_front.map((p) => {
+                    const isSel = cfg.int_bits === p.int_bits && cfg.frac_bits === p.frac_bits;
+                    return (
+                      <tr
+                        key={p.q_format}
+                        className={`border-b border-slate-800/60 ${
+                          isSel ? 'bg-indigo-500/20 text-white' : 'hover:bg-slate-800/40 text-slate-300'
+                        }`}
+                      >
+                        <td className="py-1.5 px-3 font-bold text-sky-400">
+                          {p.q_format} {p.recommended && '★ (Önerilen)'}
+                        </td>
+                        <td className="py-1.5 px-3">
+                          {p.int_bits}.{p.frac_bits} ({p.total_bits}b)
+                        </td>
+                        <td className={`py-1.5 px-3 font-bold ${p.inference_sqnr_db >= 30 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                          {p.inference_sqnr_db} dB
+                        </td>
+                        <td className="py-1.5 px-3 text-slate-400">~{p.est_luts}</td>
+                        <td className="py-1.5 px-3">{p.clipped > 0 ? `${p.clipped} taşma` : '0'}</td>
+                        <td className="py-1.5 px-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCfg((c) => ({ ...c, int_bits: p.int_bits, frac_bits: p.frac_bits }));
+                              setMaximizedModal(null);
+                            }}
+                            className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px]"
+                          >
+                            {isTr ? 'Bu Formatı Seç' : 'Select'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
-        </>
+        </div>
+      )}
+
+      {/* MAXIMIZE MODAL: BIOSIGNAL WAVEFORMS */}
+      {maximizedModal === 'biosignal' && analysis && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl p-6 space-y-4 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Activity className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-bold text-base text-slate-100">
+                  {isTr
+                    ? 'Tam Ekran Biyosinyal & 1D-CNN RTL Çıkış Dalga Formu İnceleme'
+                    : 'Full Screen Biosignal & 1D-CNN RTL Output Waveform Inspector'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMaximizedModal(null)}
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <SignalPlot
+                title={
+                  isTr
+                    ? `Giriş Biyosinyali (${analysis.series.stimulus.toUpperCase()} — ${analysis.series.input_float.length} Örnek)`
+                    : `Input Biosignal (${analysis.series.stimulus.toUpperCase()} — ${analysis.series.input_float.length} Samples)`
+                }
+                primary={analysis.series.input_float}
+                secondary={analysis.series.input_q_float}
+                primaryLabel="Float32"
+                secondaryLabel={`Quantized ${analysis.q_format}`}
+                height={180}
+              />
+              <SignalPlot
+                title={
+                  isTr
+                    ? '1D-CNN Donanım Çıkışı (Float64 vs Bit-Doğru RTL Çıkışı & Anomali Tetikleme)'
+                    : '1D-CNN Hardware Output (Float64 Ref vs Bit-Exact RTL & Anomaly Trigger)'
+                }
+                primary={analysis.series.output_fp}
+                secondary={analysis.series.output_fx_float}
+                primaryLabel="PyTorch Ref"
+                secondaryLabel={`Bit-Exact RTL (${analysis.q_format})`}
+                threshold={analysis.threshold_float}
+                anomalies={analysis.series.anomaly_indices}
+                height={180}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

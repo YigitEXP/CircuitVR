@@ -319,6 +319,24 @@ def parse_uploaded_model_bytes(filename: str, data: bytes) -> Dict[str, Any]:
         vals_coe = [round(int(t, 16) / 64.0, 5) for t in tokens if re.match(r"^[0-9a-fA-F]+$", t)]
         return {"filename": filename, "format": "Xilinx Vivado COE (.coe)", "weights": vals_coe[:16]}
 
+    if fname.endswith(".mem"):
+        lines = [l.strip() for l in text.splitlines() if l.strip() and not l.startswith("//") and not l.startswith("@")]
+        parsed_mem = []
+        for l in lines:
+            for tok in re.split(r"[\s,]+", l):
+                if re.match(r"^[0-9a-fA-F]+$", tok):
+                    raw = int(tok, 16)
+                    if len(tok) <= 4:
+                        val = raw - 65536 if raw >= 32768 else raw
+                        parsed_mem.append(val / 256.0)
+                    else:
+                        parsed_mem.append(float(raw))
+        if not parsed_mem:
+            raise ValueError(f"'{filename}' içinde geçerli Hex bellek verisi bulunamadı.")
+        if len(parsed_mem) <= 16:
+            return {"filename": filename, "format": "Hex Memory (.mem)", "weights": [round(x, 6) for x in parsed_mem]}
+        return {"filename": filename, "format": "Hex Memory Signal (.mem)", "signal": [round(x, 5) for x in parsed_mem[:256]]}
+
     nums_txt = [
         float(tok)
         for tok in re.split(r"[\s,;]+", re.sub(r"[\[\]]", "", text))

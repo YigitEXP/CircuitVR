@@ -1,5 +1,25 @@
 import {
-  AutoFixResponse, EdgeAiAnalysis, EdgeAiConfig, EdgeAiGenerated, FsmMachine, FsmReport, ImportedModelResult, InspectedRtlInfo, LintResult, OptimizationReport, OptimizationSuggestion, ParetoCandidate, SchematicGraph, SimResult, SynthStats, ToolStatus, WaveData, WorkspaceInfo, WsFile, WsModule,
+  AutoFixResponse,
+  Diagnostic,
+  EdgeAiAnalysis,
+  EdgeAiConfig,
+  EdgeAiGenerated,
+  FsmMachine,
+  FsmReport,
+  ImportedModelResult,
+  InspectedRtlInfo,
+  LintResult,
+  OptimizationReport,
+  OptimizationSuggestion,
+  ParetoCandidate,
+  SchematicGraph,
+  SimResult,
+  SynthStats,
+  ToolStatus,
+  WaveData,
+  WorkspaceInfo,
+  WsFile,
+  WsModule,
 } from '../types';
 import { UploadItem } from './api';
 
@@ -224,6 +244,455 @@ function ensureLoaded(root: string): VirtualWorkspace {
   const preset = DEMO_WORKSPACES[root] ?? DEMO_WORKSPACES['demo://traffic_light_sv'];
   const name = root.replace('demo://', '') || 'traffic_light_sv';
   return buildWorkspace(root, name, preset);
+}
+
+function parseDynamicRtlSchematic(code: string, modName: string): SchematicGraph {
+  const nodes: SchematicGraph['nodes'] = [];
+  const edges: SchematicGraph['edges'] = [];
+  const byType: Record<string, number> = {};
+
+  const incType = (t: string) => {
+    byType[t] = (byType[t] || 0) + 1;
+  };
+
+  // 1. Parameter extraction
+  const params: Record<string, number> = {
+    DATA_WIDTH: 8,
+    KERNEL_SIZE: 3,
+    DEPTH: 4,
+    WIDTH: 8,
+  };
+
+  const paramRegex = /\b(?:parameter|localparam)\s+(?:(?:logic|integer|bit)\s+)?(?:\[[\w\s\-\+\*\/]+\]\s+)?(\w+)\s*=\s*([^;,]+)/g;
+  let pm: RegExpExecArray | null;
+  while ((pm = paramRegex.exec(code)) !== null) {
+    const pName = pm[1];
+    const rawVal = pm[2].trim();
+    let evalVal = parseInt(rawVal, 10);
+    if (isNaN(evalVal)) {
+      if (rawVal.includes('-')) {
+        const parts = rawVal.split('-').map((s) => s.trim());
+        evalVal = (params[parts[0]] || parseInt(parts[0], 10) || 0) - (params[parts[1]] || parseInt(parts[1], 10) || 0);
+      } else if (rawVal.includes('+')) {
+        const parts = rawVal.split('+').map((s) => s.trim());
+        evalVal = (params[parts[0]] || parseInt(parts[0], 10) || 0) + (params[parts[1]] || parseInt(parts[1], 10) || 0);
+      }
+    }
+    if (!isNaN(evalVal) && evalVal > 0) {
+      params[pName] = evalVal;
+    }
+  }
+
+  const evalWidth = (expr: string): number => {
+    const trimmed = expr.trim();
+    if (!trimmed) return 1;
+    const m = /\[\s*([\w\s\-\+\*\/]+)\s*:\s*([\w\s\-\+\*\/]+)\s*\]/.exec(trimmed);
+    if (!m) return 1;
+    const msbStr = m[1].trim();
+    const lsbStr = m[2].trim();
+    const resolveTerm = (t: string): number => {
+      if (/^\d+$/.test(t)) return parseInt(t, 10);
+      for (const [k, v] of Object.entries(params)) {
+        if (t === k) return v;
+        if (t === `${k}-1` || t === `${k} - 1`) return v - 1;
+        if (t === `${k}+1` || t === `${k} + 1`) return v + 1;
+      }
+      return 0;
+    };
+    const msb = resolveTerm(msbStr);
+    const lsb = resolveTerm(lsbStr);
+    return Math.max(1, Math.abs(msb - lsb) + 1);
+  };
+
+  const evalUnpackedCount = (expr: string): number => {
+    if (!expr) return 1;
+    const m = /\[\s*([\w\s\-\+\*\/]+)\s*:\s*([\w\s\-\+\*\/]+)\s*\]/.exec(expr);
+    if (!m) return 1;
+    const s1 = m[1].trim();
+    const s2 = m[2].trim();
+    const resolve = (t: string): number => {
+      if (/^\d+$/.test(t)) return parseInt(t, 10);
+      for (const [k, v] of Object.entries(params)) {
+        if (t === k) return v;
+        if (t === `${k}-1` || t === `${k} - 1`) return v - 1;
+      }
+      return 0;
+    };
+    return Math.max(1, Math.abs(resolve(s1) - resolve(s2)) + 1);
+  };
+
+  // 2. Ports extraction
+  const portRegex = /\b(input|output|inout)\s+(?:(logic|wire|reg|bit|state_t)\s+)?(?:(\[[^\]]+\])\s+)?([a-zA-Z_]\w*)(?:\s*(\[[^\]]+\]))?/g;
+  let pMatch: RegExpExecArray | null;
+  const inputPorts: { name: string; width: number; unpacked: number }[] = [];
+  const outputPorts: { name: string; width: number; unpacked: number }[] = [];
+
+  while ((pMatch = portRegex.exec(code)) !== null) {
+    const dir = pMatch[1];
+    const range = pMatch[3] || '';
+    const name = pMatch[4];
+    const unpacked = pMatch[5] || '';
+    const width = evalWidth(range);
+    const uCount = evalUnpackedCount(unpacked);
+
+    if (dir === 'input') {
+      inputPorts.push({ name, width, unpacked: uCount });
+    } else if (dir === 'output') {
+      outputPorts.push({ name, width, unpacked: uCount });
+    }
+  }
+
+  if (inputPorts.length === 0) {
+    inputPorts.push({ name: 'clk', width: 1, unpacked: 1 });
+    inputPorts.push({ name: 'rst', width: 1, unpacked: 1 });
+  }
+
+  // Create Port Nodes
+  inputPorts.forEach((p) => {
+    const id = `in_${p.name}`;
+    const lbl = p.width > 1 ? `${p.name}[${p.width - 1}:0]` : p.name;
+    nodes.push({
+      id,
+      kind: 'port_in',
+      type: '$input',
+      label: lbl,
+      ports: [{ id: 'Y', name: 'Y', dir: 'output', width: p.width }],
+      params: {},
+    });
+  });
+
+  outputPorts.forEach((p) => {
+    if (p.unpacked > 1) {
+      for (let k = 0; k < p.unpacked; k++) {
+        const id = `out_${p.name}_${k}`;
+        const lbl = `${p.name}[${k}]${p.width > 1 ? `[${p.width - 1}:0]` : ''}`;
+        nodes.push({
+          id,
+          kind: 'port_out',
+          type: '$output',
+          label: lbl,
+          ports: [{ id: 'A', name: 'A', dir: 'input', width: p.width }],
+          params: {},
+        });
+      }
+    } else {
+      const id = `out_${p.name}`;
+      const lbl = p.width > 1 ? `${p.name}[${p.width - 1}:0]` : p.name;
+      nodes.push({
+        id,
+        kind: 'port_out',
+        type: '$output',
+        label: lbl,
+        ports: [{ id: 'A', name: 'A', dir: 'input', width: p.width }],
+        params: {},
+      });
+    }
+  });
+
+  // 3. Sequential logic detection
+  const isAsyncReset = /@\(\s*posedge\s+clk[^\)]*or\s+posedge\s+rst|@\(\s*posedge\s+clk[^\)]*or\s+negedge\s+rst_n/i.test(code);
+  const rstCellType = isAsyncReset ? '$adff' : '$sdff';
+  const rstPinName = isAsyncReset ? 'ARST' : 'RST';
+
+  const enMatch = /\bif\s*\(\s*(!?rst\w*)\s*\)\s*begin?[\s\S]*?else\s+if\s*\(\s*(\w+)\s*\)/i.exec(code);
+  const enSignal = enMatch ? enMatch[2] : (/\bif\s*\(\s*(valid_in|en|enable|load)\s*\)/i.exec(code)?.[1] || null);
+
+  const isShiftReg = /shift_reg|window\s*\[/i.test(code) || /for\s*\([^;]+;\s*i\s*<\s*(\w+|\d+)/i.test(code);
+  const kernelSize = params.KERNEL_SIZE || 3;
+  const dataWidth = params.DATA_WIDTH || 8;
+
+  let edgeIdx = 1;
+  const nextEdgeId = () => `e${edgeIdx++}`;
+
+  if (isShiftReg && kernelSize >= 2) {
+    for (let k = 0; k < kernelSize; k++) {
+      const cellId = `reg_shift_${k}`;
+      const cellType = enSignal ? `${rstCellType}e` : rstCellType;
+      incType(cellType);
+      nodes.push({
+        id: cellId,
+        kind: 'sequential',
+        type: cellType,
+        label: `shift_reg_${k}`,
+        typeLabel: cellType,
+        ports: [
+          { id: 'CLK', name: 'CLK', dir: 'input' as const, width: 1 },
+          { id: rstPinName, name: rstPinName, dir: 'input' as const, width: 1 },
+          ...(enSignal ? [{ id: 'EN', name: 'EN', dir: 'input' as const, width: 1 }] : []),
+          { id: 'D', name: 'D', dir: 'input' as const, width: dataWidth },
+          { id: 'Q', name: 'Q', dir: 'output' as const, width: dataWidth },
+        ],
+        params: {},
+      });
+
+      edges.push({
+        id: nextEdgeId(),
+        net: 'clk',
+        width: 1,
+        source: 'in_clk',
+        sourcePort: 'Y',
+        target: cellId,
+        targetPort: 'CLK',
+      });
+      edges.push({
+        id: nextEdgeId(),
+        net: 'rst',
+        width: 1,
+        source: 'in_rst',
+        sourcePort: 'Y',
+        target: cellId,
+        targetPort: rstPinName,
+      });
+
+      if (enSignal) {
+        const enPortId = inputPorts.some((p) => p.name === enSignal) ? `in_${enSignal}` : 'in_valid_in';
+        if (nodes.some((n) => n.id === enPortId)) {
+          edges.push({
+            id: nextEdgeId(),
+            net: enSignal,
+            width: 1,
+            source: enPortId,
+            sourcePort: 'Y',
+            target: cellId,
+            targetPort: 'EN',
+          });
+        }
+      }
+
+      if (k === 0) {
+        const inDataId = inputPorts.some((p) => p.name === 'data_in')
+          ? 'in_data_in'
+          : (inputPorts.find((p) => p.width > 1)?.name ? `in_${inputPorts.find((p) => p.width > 1)!.name}` : 'in_clk');
+        edges.push({
+          id: nextEdgeId(),
+          net: 'data_in',
+          width: dataWidth,
+          source: inDataId,
+          sourcePort: 'Y',
+          target: cellId,
+          targetPort: 'D',
+        });
+      } else {
+        edges.push({
+          id: nextEdgeId(),
+          net: `shift_net_${k}`,
+          width: dataWidth,
+          source: `reg_shift_${k - 1}`,
+          sourcePort: 'Q',
+          target: cellId,
+          targetPort: 'D',
+        });
+      }
+
+      const outNodeId = `out_window_${k}`;
+      if (nodes.some((n) => n.id === outNodeId)) {
+        edges.push({
+          id: nextEdgeId(),
+          net: `window[${k}]`,
+          width: dataWidth,
+          source: cellId,
+          sourcePort: 'Q',
+          target: outNodeId,
+          targetPort: 'A',
+        });
+      }
+    }
+
+    if (outputPorts.some((p) => p.name === 'valid_out')) {
+      const voutRegId = 'reg_valid_out';
+      incType(rstCellType);
+      nodes.push({
+        id: voutRegId,
+        kind: 'sequential',
+        type: rstCellType,
+        label: 'valid_out_reg',
+        typeLabel: rstCellType,
+        ports: [
+          { id: 'CLK', name: 'CLK', dir: 'input', width: 1 },
+          { id: rstPinName, name: rstPinName, dir: 'input', width: 1 },
+          { id: 'D', name: 'D', dir: 'input', width: 1 },
+          { id: 'Q', name: 'Q', dir: 'output', width: 1 },
+        ],
+        params: {},
+      });
+      edges.push({
+        id: nextEdgeId(),
+        net: 'clk',
+        width: 1,
+        source: 'in_clk',
+        sourcePort: 'Y',
+        target: voutRegId,
+        targetPort: 'CLK',
+      });
+      edges.push({
+        id: nextEdgeId(),
+        net: 'valid_out',
+        width: 1,
+        source: voutRegId,
+        sourcePort: 'Q',
+        target: 'out_valid_out',
+        targetPort: 'A',
+      });
+    }
+  } else {
+    const isFsm = /case\s*\(\s*state\b/i.test(code) || /state_t|ALL_RED|RED|GREEN/i.test(code);
+    const isCounter = /\bcount\s*<=\s*count\s*\+\s*1/i.test(code) || /\+\s*1'b1/i.test(code);
+    const hasAdd = /\+/.test(code);
+    const hasMul = /\*/.test(code);
+    const hasLt = /<\s*(\w+|\d+)/.test(code);
+    const hasGe = />=\s*(\w+|\d+)/.test(code);
+
+    if (isFsm) {
+      incType('$pmux');
+      nodes.push({
+        id: 'mux_next',
+        kind: 'mux',
+        type: '$pmux',
+        label: 'next_state_mux',
+        typeLabel: '$pmux',
+        ports: [
+          { id: 'A', name: 'A', dir: 'input', width: 2 },
+          { id: 'S', name: 'S', dir: 'input', width: 1 },
+          { id: 'Y', name: 'Y', dir: 'output', width: 2 },
+        ],
+        params: {},
+      });
+
+      incType(rstCellType);
+      nodes.push({
+        id: 'reg_state',
+        kind: 'sequential',
+        type: rstCellType,
+        label: 'state_reg',
+        typeLabel: rstCellType,
+        ports: [
+          { id: 'CLK', name: 'CLK', dir: 'input', width: 1 },
+          { id: rstPinName, name: rstPinName, dir: 'input', width: 1 },
+          { id: 'D', name: 'D', dir: 'input', width: 2 },
+          { id: 'Q', name: 'Q', dir: 'output', width: 2 },
+        ],
+        params: {},
+      });
+
+      edges.push({ id: nextEdgeId(), net: 'clk', width: 1, source: 'in_clk', sourcePort: 'Y', target: 'reg_state', targetPort: 'CLK' });
+      edges.push({ id: nextEdgeId(), net: 'rst', width: 1, source: 'in_rst', sourcePort: 'Y', target: 'reg_state', targetPort: rstPinName });
+      edges.push({ id: nextEdgeId(), net: 'next_state', width: 2, source: 'mux_next', sourcePort: 'Y', target: 'reg_state', targetPort: 'D' });
+      edges.push({ id: nextEdgeId(), net: 'state_fb', width: 2, source: 'reg_state', sourcePort: 'Q', target: 'mux_next', targetPort: 'A' });
+
+      const stateOut = nodes.find((n) => n.kind === 'port_out' && n.label.includes('state'));
+      if (stateOut) {
+        edges.push({ id: nextEdgeId(), net: 'state', width: 2, source: 'reg_state', sourcePort: 'Q', target: stateOut.id, targetPort: 'A' });
+      }
+    }
+
+    if (isCounter || hasAdd) {
+      incType('$add');
+      nodes.push({
+        id: 'cell_add',
+        kind: 'comb',
+        type: '$add',
+        label: '$add_1',
+        typeLabel: '$add',
+        ports: [
+          { id: 'A', name: 'A', dir: 'input', width: 4 },
+          { id: 'B', name: 'B', dir: 'input', width: 4 },
+          { id: 'Y', name: 'Y', dir: 'output', width: 4 },
+        ],
+        params: {},
+      });
+
+      incType(rstCellType);
+      nodes.push({
+        id: 'reg_count',
+        kind: 'sequential',
+        type: rstCellType,
+        label: 'count_reg',
+        typeLabel: rstCellType,
+        ports: [
+          { id: 'CLK', name: 'CLK', dir: 'input', width: 1 },
+          { id: rstPinName, name: rstPinName, dir: 'input', width: 1 },
+          { id: 'D', name: 'D', dir: 'input', width: 4 },
+          { id: 'Q', name: 'Q', dir: 'output', width: 4 },
+        ],
+        params: {},
+      });
+
+      edges.push({ id: nextEdgeId(), net: 'clk', width: 1, source: 'in_clk', sourcePort: 'Y', target: 'reg_count', targetPort: 'CLK' });
+      edges.push({ id: nextEdgeId(), net: 'count_next', width: 4, source: 'cell_add', sourcePort: 'Y', target: 'reg_count', targetPort: 'D' });
+      edges.push({ id: nextEdgeId(), net: 'count_fb', width: 4, source: 'reg_count', sourcePort: 'Q', target: 'cell_add', targetPort: 'A' });
+
+      const countOut = nodes.find((n) => n.kind === 'port_out' && (n.label.includes('count') || n.label.includes('y')));
+      if (countOut) {
+        edges.push({ id: nextEdgeId(), net: 'count_out', width: 4, source: 'reg_count', sourcePort: 'Q', target: countOut.id, targetPort: 'A' });
+      }
+    }
+
+    if (hasGe || hasLt) {
+      const compType = hasGe ? '$ge' : '$lt';
+      incType(compType);
+      nodes.push({
+        id: 'cell_comp',
+        kind: 'comb',
+        type: compType,
+        label: compType,
+        typeLabel: compType,
+        ports: [
+          { id: 'A', name: 'A', dir: 'input', width: 4 },
+          { id: 'B', name: 'B', dir: 'input', width: 4 },
+          { id: 'Y', name: 'Y', dir: 'output', width: 1 },
+        ],
+        params: {},
+      });
+      if (nodes.some((n) => n.id === 'reg_count')) {
+        edges.push({ id: nextEdgeId(), net: 'count_comp', width: 4, source: 'reg_count', sourcePort: 'Q', target: 'cell_comp', targetPort: 'A' });
+      }
+    }
+
+    if (hasMul) {
+      incType('$mul');
+      nodes.push({
+        id: 'cell_mul',
+        kind: 'comb',
+        type: '$mul',
+        label: '$mul_1',
+        typeLabel: '$mul',
+        ports: [
+          { id: 'A', name: 'A', dir: 'input', width: 8 },
+          { id: 'B', name: 'B', dir: 'input', width: 8 },
+          { id: 'Y', name: 'Y', dir: 'output', width: 16 },
+        ],
+        params: {},
+      });
+    }
+  }
+
+  const combCells = nodes.filter((n) => n.kind === 'comb' || n.kind === 'mux').length;
+  const depth = Math.max(1, Math.min(6, combCells));
+  const delayNs = +(0.35 + depth * 0.45 + 0.15).toFixed(2);
+  const fmaxMhz = +(1000 / delayNs).toFixed(1);
+
+  const critNodes = nodes.filter((n) => n.kind === 'sequential' || n.kind === 'comb').map((n) => n.id);
+  const critEdges = edges.slice(0, Math.min(3, edges.length)).map((e) => e.id);
+
+  return {
+    module: modName,
+    modules: [modName],
+    nodes,
+    edges,
+    stats: {
+      cells: nodes.filter((n) => n.kind !== 'port_in' && n.kind !== 'port_out').length,
+      nets: edges.length,
+      ports: nodes.filter((n) => n.kind === 'port_in' || n.kind === 'port_out').length,
+      by_type: byType,
+    },
+    critical_path: {
+      depth,
+      delay_ns: delayNs,
+      fmax_mhz: fmaxMhz,
+      nodes: critNodes,
+      edges: critEdges,
+    },
+  };
 }
 
 export const cloudFallback = {
@@ -663,54 +1132,139 @@ export const cloudFallback = {
     };
   },
   lint(path: string): LintResult {
-    ensureLoaded(path);
-    return { tool: 'verilator (cloud)', success: true, diagnostics: [], errors: 0, warnings: 0 };
-  },
-  schematic(_path: string, top?: string): SchematicGraph {
-    const mod = top || 'top_module';
+    const vw = ensureLoaded(path);
+    const diags: Diagnostic[] = [];
+
+    for (const [fpath, content] of Object.entries(vw.files)) {
+      if (!/\.(sv|v|vhd|vhdl)$/i.test(fpath)) continue;
+      const lines = content.split('\n');
+      let inCommentBlock = false;
+      let moduleCount = 0;
+      let endModuleCount = 0;
+      let beginCount = 0;
+      let endCount = 0;
+      let caseCount = 0;
+      let endcaseCount = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const lineNo = i + 1;
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        if (trimmed.startsWith('/*')) inCommentBlock = true;
+        if (inCommentBlock) {
+          if (trimmed.includes('*/')) inCommentBlock = false;
+          continue;
+        }
+        if (trimmed.startsWith('//') || trimmed.startsWith('--') || !trimmed) continue;
+
+        if (/\bmodule\b/.test(trimmed)) moduleCount++;
+        if (/\bendmodule\b/.test(trimmed)) endModuleCount++;
+        if (/\bbegin\b/.test(trimmed)) beginCount++;
+        if (/\bend\b/.test(trimmed) && !/\bend(module|case|function|task|package|generate)\b/.test(trimmed)) endCount++;
+        if (/\bcase\s*\(/.test(trimmed)) caseCount++;
+        if (/\bendcase\b/.test(trimmed)) endcaseCount++;
+
+        // Stray punctuation error: e.g. `<= data_in;,` or `;;` or `,;`
+        if (/(?:<=|=)\s*[^;]*[;,]{2,}/.test(trimmed) || /;\s*,/.test(trimmed) || /,\s*;/.test(trimmed) || /;;/.test(trimmed)) {
+          diags.push({
+            file: fpath,
+            line: lineNo,
+            column: 1,
+            severity: 'error',
+            message: 'Sözdizimi hatası: Beklenmeyen peş peşe noktalama işareti (örn. ";," veya ";;").',
+            source: 'cloud-linter',
+          });
+        }
+
+        // if condition without parentheses: e.g. `if valid_in begin`
+        if (/\bif\s+[^(][^;{]*\b(begin|then|return)\b/.test(trimmed)) {
+          diags.push({
+            file: fpath,
+            line: lineNo,
+            column: 1,
+            severity: 'error',
+            message: "Sözdizimi hatası: 'if' koşulu parantez içine alınmalıdır: if (...) .",
+            source: 'cloud-linter',
+          });
+        }
+
+        // Missing semicolon on assignment / statement lines
+        if (
+          /^\s*(?:[a-zA-Z_]\w*(?:\[[^\]]+\])?\s*<=|assign\s+|[a-zA-Z_]\w*\s*=)\s*[^;{]+$/i.test(trimmed) &&
+          !trimmed.endsWith('{') &&
+          !trimmed.endsWith('begin') &&
+          !trimmed.endsWith(',') &&
+          !trimmed.endsWith('(') &&
+          !lines[i + 1]?.trim().startsWith(';')
+        ) {
+          diags.push({
+            file: fpath,
+            line: lineNo,
+            column: trimmed.length,
+            severity: 'error',
+            message: "Sözdizimi hatası: Satır sonunda noktalı virgül ';' eksik.",
+            source: 'cloud-linter',
+          });
+        }
+      }
+
+      if (moduleCount > endModuleCount) {
+        diags.push({
+          file: fpath,
+          line: lines.length,
+          column: 1,
+          severity: 'error',
+          message: "Yapısal hata: Eksik 'endmodule' bildirimi.",
+          source: 'cloud-linter',
+        });
+      }
+      if (caseCount > endcaseCount) {
+        diags.push({
+          file: fpath,
+          line: lines.length,
+          column: 1,
+          severity: 'error',
+          message: "Yapısal hata: Eksik 'endcase' bildirimi.",
+          source: 'cloud-linter',
+        });
+      }
+    }
+
     return {
-      module: mod,
-      modules: [mod],
-      nodes: [
-        { id: 'in_clk', kind: 'port_in', type: '$input', label: 'clk', ports: [{ id: 'Y', name: 'Y', dir: 'output', width: 1 }], params: {} },
-        { id: 'in_rst', kind: 'port_in', type: '$input', label: 'rst', ports: [{ id: 'Y', name: 'Y', dir: 'output', width: 1 }], params: {} },
-        {
-          id: 'mux_next', kind: 'mux', type: '$pmux', label: 'next_state_mux', typeLabel: '$pmux',
-          ports: [
-            { id: 'A', name: 'A', dir: 'input', width: 2 },
-            { id: 'S', name: 'S', dir: 'input', width: 1 },
-            { id: 'Y', name: 'Y', dir: 'output', width: 2 },
-          ],
-          params: {},
-        },
-        {
-          id: 'reg_state', kind: 'sequential', type: '$adff', label: 'state_reg', typeLabel: '$adff',
-          ports: [
-            { id: 'CLK', name: 'CLK', dir: 'input', width: 1 },
-            { id: 'ARST', name: 'ARST', dir: 'input', width: 1 },
-            { id: 'D', name: 'D', dir: 'input', width: 2 },
-            { id: 'Q', name: 'Q', dir: 'output', width: 2 },
-          ],
-          params: {},
-        },
-        { id: 'out_state', kind: 'port_out', type: '$output', label: 'state[1:0]', ports: [{ id: 'A', name: 'A', dir: 'input', width: 2 }], params: {} },
-      ],
-      edges: [
-        { id: 'e1', net: 'clk', width: 1, source: 'in_clk', sourcePort: 'Y', target: 'reg_state', targetPort: 'CLK' },
-        { id: 'e2', net: 'rst', width: 1, source: 'in_rst', sourcePort: 'Y', target: 'reg_state', targetPort: 'ARST' },
-        { id: 'e3', net: 'next', width: 2, source: 'mux_next', sourcePort: 'Y', target: 'reg_state', targetPort: 'D' },
-        { id: 'e4', net: 'state', width: 2, source: 'reg_state', sourcePort: 'Q', target: 'out_state', targetPort: 'A' },
-        { id: 'e5', net: 'state_fb', width: 2, source: 'reg_state', sourcePort: 'Q', target: 'mux_next', targetPort: 'A' },
-      ],
-      stats: { cells: 2, nets: 5, ports: 3, by_type: { '$pmux': 1, '$adff': 1 } },
-      critical_path: {
-        depth: 1,
-        delay_ns: 1.02,
-        fmax_mhz: 485.0,
-        nodes: ['reg_state', 'mux_next'],
-        edges: ['e5', 'e3'],
-      },
+      tool: 'verilator (cloud-ast)',
+      success: diags.length === 0,
+      diagnostics: diags,
+      errors: diags.filter((d) => d.severity === 'error').length,
+      warnings: diags.filter((d) => d.severity === 'warning').length,
     };
+  },
+  schematic(path: string, top?: string): SchematicGraph {
+    const vw = ensureLoaded(path);
+    let targetCode = '';
+    let modName = top || vw.info.default_top || Object.keys(vw.info.modules)[0] || 'top_module';
+
+    for (const [, content] of Object.entries(vw.files)) {
+      if (new RegExp(`\\b(module|entity)\\s+${modName}\\b`, 'i').test(content)) {
+        targetCode = content;
+        break;
+      }
+    }
+    if (!targetCode) {
+      for (const [fpath, content] of Object.entries(vw.files)) {
+        if (!/tb[_\.]/i.test(fpath) && /\.(sv|v|vhd)$/i.test(fpath)) {
+          targetCode = content;
+          const m = content.match(/\bmodule\s+(\w+)/i);
+          if (m) modName = m[1];
+          break;
+        }
+      }
+    }
+    if (!targetCode) {
+      targetCode = Object.values(vw.files)[0] || '';
+    }
+
+    return parseDynamicRtlSchematic(targetCode, modName);
   },
   simulate(): SimResult {
     return {
@@ -722,21 +1276,67 @@ export const cloudFallback = {
       duration: 0.12,
     };
   },
-  wave(): WaveData {
+  wave(path?: string): WaveData {
+    const signals: WaveData['signals'] = [
+      { id: 's1', type: 'wire', width: 1, name: 'tb.clk', short: 'clk', scope: 'tb' },
+      { id: 's2', type: 'wire', width: 1, name: 'tb.rst', short: 'rst', scope: 'tb' },
+    ];
+    const changes: Record<string, [number, string][]> = {
+      s1: [[0, '0'], [5, '1'], [10, '0'], [15, '1'], [20, '0'], [25, '1'], [30, '0'], [35, '1'], [40, '0'], [45, '1'], [50, '0'], [55, '1'], [60, '0'], [65, '1'], [70, '0']],
+      s2: [[0, '1'], [12, '0']],
+    };
+
+    if (path) {
+      try {
+        const vw = ensureLoaded(path);
+        let code = '';
+        for (const [fp, c] of Object.entries(vw.files)) {
+          if (!/tb[_\.]/i.test(fp) && /\.(sv|v|vhd)$/i.test(fp)) {
+            code = c;
+            break;
+          }
+        }
+        if (code) {
+          if (/valid_in/i.test(code)) {
+            signals.push({ id: 's_vin', type: 'wire', width: 1, name: 'tb.valid_in', short: 'valid_in', scope: 'tb' });
+            changes['s_vin'] = [[0, '0'], [15, '1'], [45, '0'], [55, '1']];
+          }
+          if (/data_in/i.test(code)) {
+            signals.push({ id: 's_din', type: 'wire', width: 8, name: 'tb.data_in[7:0]', short: 'data_in', scope: 'tb' });
+            changes['s_din'] = [[0, '00'], [15, '10'], [25, '20'], [35, '30'], [45, '40'], [55, '50']];
+          }
+          if (/window|shift_reg/i.test(code)) {
+            signals.push({ id: 's_w0', type: 'wire', width: 8, name: 'tb.window_0[7:0]', short: 'window[0]', scope: 'tb' });
+            signals.push({ id: 's_w1', type: 'wire', width: 8, name: 'tb.window_1[7:0]', short: 'window[1]', scope: 'tb' });
+            signals.push({ id: 's_w2', type: 'wire', width: 8, name: 'tb.window_2[7:0]', short: 'window[2]', scope: 'tb' });
+            changes['s_w0'] = [[0, '00'], [25, '10'], [35, '20'], [45, '30']];
+            changes['s_w1'] = [[0, '00'], [35, '10'], [45, '20'], [55, '30']];
+            changes['s_w2'] = [[0, '00'], [45, '10'], [55, '20']];
+          }
+          if (/count/i.test(code)) {
+            signals.push({ id: 's_cnt', type: 'reg', width: 4, name: 'tb.count[3:0]', short: 'count', scope: 'tb' });
+            changes['s_cnt'] = [[0, '0'], [15, '1'], [25, '2'], [35, '3'], [45, '4'], [55, '5']];
+          }
+          if (/state/i.test(code)) {
+            signals.push({ id: 's_st', type: 'reg', width: 2, name: 'tb.state[1:0]', short: 'state', scope: 'tb' });
+            changes['s_st'] = [[0, '00'], [15, '01'], [25, '10'], [35, '11'], [45, '01'], [55, '10']];
+          }
+          if (/valid_out/i.test(code)) {
+            signals.push({ id: 's_vout', type: 'wire', width: 1, name: 'tb.valid_out', short: 'valid_out', scope: 'tb' });
+            changes['s_vout'] = [[0, '0'], [25, '1']];
+          }
+        }
+      } catch {
+        // fallback to default signals
+      }
+    }
+
     return {
       timescale: '1ns',
       end_time: 70,
       truncated: false,
-      signals: [
-        { id: 's1', type: 'wire', width: 1, name: 'tb.clk', short: 'clk', scope: 'tb' },
-        { id: 's2', type: 'wire', width: 1, name: 'tb.rst', short: 'rst', scope: 'tb' },
-        { id: 's3', type: 'reg', width: 2, name: 'tb.state[1:0]', short: 'state[1:0]', scope: 'tb' },
-      ],
-      changes: {
-        s1: [[0, '0'], [5, '1'], [10, '0'], [15, '1'], [20, '0'], [25, '1'], [30, '0'], [35, '1'], [40, '0'], [45, '1'], [50, '0'], [55, '1'], [60, '0']],
-        s2: [[0, '1'], [12, '0']],
-        s3: [[0, '00'], [15, '01'], [25, '10'], [35, '11'], [45, '01'], [55, '10']],
-      },
+      signals,
+      changes,
     };
   },
   edgeAiAnalyze(cfg: EdgeAiConfig): EdgeAiAnalysis {

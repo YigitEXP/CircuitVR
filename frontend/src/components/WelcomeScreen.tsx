@@ -18,9 +18,10 @@ interface Props {
   onLoaded: (info: WorkspaceInfo) => void;
   onShowTools: () => void;
   onShowDev: () => void;
+  onOpenDojo?: () => void;
 }
 
-export default function WelcomeScreen({ tools, error, busy, onOpen, onCreate, onLoaded, onShowTools, onShowDev }: Props) {
+export default function WelcomeScreen({ tools, error, busy, onOpen, onCreate, onLoaded, onShowTools, onShowDev, onOpenDojo }: Props) {
   const { lang, t: tr } = useI18n();
   const [path, setPath] = useState(localStorage.getItem('cvr.lastPath') ?? '');
   const [recent, setRecent] = useState<string[]>([]);
@@ -160,6 +161,37 @@ export default function WelcomeScreen({ tools, error, busy, onOpen, onCreate, on
           </button>
           {(error || localErr) && <p className="text-sm text-red-400 whitespace-pre-wrap">{error || localErr}</p>}
         </div>
+
+        {/* RTL Dojo Card */}
+        {onOpenDojo && (
+          <div className="card border-indigo-500/30 bg-indigo-950/20 p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 flex-shrink-0 mt-0.5">
+                  <Terminal className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-sm text-slate-100 flex items-center gap-2">
+                    <span>{lang === 'tr' ? 'RTL Dojo (Uygulamalı Görevler)' : 'RTL Dojo (Hands-on Challenges)'}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/30 text-indigo-300 font-mono">4 Görev</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {lang === 'tr'
+                      ? 'Shift Register, Sync FIFO, Pipelined MAC ve AXI4-Stream interaktif görevleri ile donanım tasarımını pekiştirin.'
+                      : 'Master RTL design with SIPO shift registers, synchronous FIFOs, pipelined MACs, and AXI4-Stream slices.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenDojo}
+                className="btn-primary text-xs py-1.5 px-3 bg-indigo-600 hover:bg-indigo-500 font-semibold flex-shrink-0 self-start sm:self-auto"
+              >
+                {lang === 'tr' ? 'Dojo\'ya Başla' : 'Start Dojo'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Hazır Çoklu-HDL Örnekleri (SystemVerilog / Verilog / VHDL) */}
         <div className="card space-y-2">

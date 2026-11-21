@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Maximize2, ZoomIn, ZoomOut, ListPlus, X, Loader2, Activity, Ruler, AlertTriangle } from 'lucide-react';
+import { Play, Maximize2, ZoomIn, ZoomOut, ListPlus, X, Loader2, Activity, Ruler, AlertTriangle, FileCode } from 'lucide-react';
 import { WaveData, WaveSignal } from '../types';
 import { useI18n } from '../i18n';
 
@@ -15,6 +15,7 @@ interface Props {
   busy: boolean;
   status: string;
   onRun: () => void;
+  onOpenTbBuilder?: () => void;
 }
 
 const UNIT_PS: Record<string, number> = { fs: 0.001, ps: 1, ns: 1000, us: 1e6, ms: 1e9, s: 1e12 };
@@ -80,7 +81,7 @@ function formatValue(bits: string, width: number, radix: Radix): string {
   }
 }
 
-export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Props) {
+export default function WaveformViewer({ wave, tbTop, busy, status, onRun, onOpenTbBuilder }: Props) {
   const { lang, t: tr } = useI18n();
   const isTr = lang === 'tr';
   const [selected, setSelected] = useState<string[]>([]);
@@ -409,6 +410,17 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
           {isTr ? 'Simülasyonu Çalıştır' : 'Run Simulation'}
         </button>
+        {onOpenTbBuilder && (
+          <button
+            type="button"
+            onClick={onOpenTbBuilder}
+            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 text-xs flex items-center gap-1.5 transition font-semibold"
+            title={isTr ? 'Görsel Testbench Oluşturucu' : 'Visual Testbench Builder'}
+          >
+            <FileCode className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{isTr ? 'Görsel TB Üret' : 'Visual TB'}</span>
+          </button>
+        )}
         <span className="text-xs text-gray-400">{tbTop ? `tb: ${tbTop}` : (isTr ? 'Testbench seçilmedi' : 'No testbench selected')}</span>
 
         {/* Dynamic Measurement HUD Pill */}
@@ -528,6 +540,16 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
               {tr.runSim}
             </button>
+            {onOpenTbBuilder && (
+              <button
+                type="button"
+                onClick={onOpenTbBuilder}
+                className="w-full py-2 px-4 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 text-xs font-semibold flex items-center justify-center gap-2 transition"
+              >
+                <FileCode className="w-4 h-4 text-emerald-400" />
+                <span>{isTr ? 'Görsel Testbench Oluştur' : 'Build Visual Testbench'}</span>
+              </button>
+            )}
           </div>
         </div>
       ) : (

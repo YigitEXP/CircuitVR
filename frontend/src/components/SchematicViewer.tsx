@@ -15,8 +15,8 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
-import { Zap, ZoomIn, ZoomOut, Maximize2, Download, X } from 'lucide-react';
-import { SchematicGraph, SchematicNode } from '../types';
+import { Zap, ZoomIn, ZoomOut, Maximize2, Download, X, Activity } from 'lucide-react';
+import { SchematicGraph, SchematicNode, WaveData } from '../types';
 import { useI18n } from '../i18n';
 
 const NODE_W = 170;
@@ -42,7 +42,7 @@ function nodeSize(n: SchematicNode) {
 }
 
 /* ---------- Custom node ---------- */
-const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean; critical?: boolean }>> = ({ data }) => {
+const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean; critical?: boolean; liveValue?: string | null }>> = ({ data }) => {
   const n = data.node;
   const colors = KIND_COLORS[n.kind] ?? KIND_COLORS.comb;
   const borderCol = data.critical ? '#f43f5e' : colors.border;
@@ -88,6 +88,11 @@ const CellNode: React.FC<NodeProps<{ node: SchematicNode; dim: boolean; critical
       }}
       className="text-white shadow-lg relative group/node"
     >
+      {data.liveValue !== undefined && data.liveValue !== null && (
+        <div className="absolute top-1 right-2 px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-mono font-bold z-10 pointer-events-none">
+          Q: {data.liveValue}
+        </div>
+      )}
       {/* Floating Smart Tooltip on Hover */}
       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-50 p-2.5 rounded-lg border border-slate-700 bg-slate-950/95 shadow-2xl opacity-0 group-hover/node:opacity-100 pointer-events-none transition-all duration-150 min-w-[210px] text-[11px] font-mono space-y-1">
         <div className="flex items-center justify-between border-b border-slate-800 pb-1">
@@ -184,9 +189,10 @@ async function layoutGraph(graph: SchematicGraph) {
 /* ---------- Viewer ---------- */
 interface Props {
   graph: SchematicGraph;
+  wave?: WaveData | null;
 }
 
-const Inner: React.FC<Props> = ({ graph }) => {
+const Inner: React.FC<Props> = ({ graph, wave }) => {
   const { lang } = useI18n();
   const isTr = lang === 'tr';
   const { zoomIn, zoomOut, fitView } = useReactFlow();
@@ -197,6 +203,28 @@ const Inner: React.FC<Props> = ({ graph }) => {
   const [showCritical, setShowCritical] = useState(false);
   const [query, setQuery] = useState('');
   const [layouting, setLayouting] = useState(false);
+  const [simTime, setSimTime] = useState<number>(15);
+
+  const lookupValueAtTime = useCallback(
+    (netName: string, t: number): string | null => {
+      if (!wave) return null;
+      const clean = netName.toLowerCase().replace(/\[\d+:\d+\]/, '').replace(/\[\d+\]/, '');
+      const sig = wave.signals.find((s) => {
+        const sName = s.short.toLowerCase();
+        const fName = s.name.toLowerCase();
+        return sName === clean || fName.endsWith(`.${clean}`) || sName.includes(clean);
+      });
+      if (!sig) return null;
+      const ch = wave.changes[sig.id] ?? [];
+      let ans: string | null = null;
+      for (const [ts, val] of ch) {
+        if (ts <= t) ans = val;
+        else break;
+      }
+      return ans;
+    },
+    [wave]
+  );
 
   const downloadSvg = useCallback(() => {
     const svgEl = document.querySelector('.react-flow__edges');
@@ -236,28 +264,57 @@ const Inner: React.FC<Props> = ({ graph }) => {
           id: n.id,
           type: 'cell',
           position: pos.get(n.id) ?? { x: 0, y: 0 },
-          data: { node: n, dim: false, critical: false },
+          data: { node: n, dim: false, critical: false, liveValue: lookupValueAtTime(n.label, simTime) },
         })) as Node[]
       );
       setEdges(
-        graph.edges.map((e) => ({
-          id: e.id,
-          source: e.source,
-          sourceHandle: e.sourcePort,
-          target: e.target,
-          targetHandle: e.targetPort,
-          type: 'smoothstep',
-          data: { net: e.net, width: e.width },
-          label: e.width > 1 ? `${e.net}[${e.width - 1}:0]` : undefined,
-          labelStyle: { fill: '#94a3b8', fontSize: 10 },
-          labelBgStyle: { fill: '#0f172a' },
-          style: { stroke: '#64748b', strokeWidth: e.width > 1 ? 3 : 1.5 },
-        })) as Edge[]
+        graph.edges.map((e) => {
+          const live = lookupValueAtTime(e.net, simTime);
+          return {
+            id: e.id,
+            source: e.source,
+            sourceHandle: e.sourcePort,
+            target: e.target,
+            targetHandle: e.targetPort,
+            type: 'smoothstep',
+            data: { net: e.net, width: e.width },
+            label: live ? `${e.net} = ${live}` : e.width > 1 ? `${e.net}[${e.width - 1}:0]` : undefined,
+            labelStyle: { fill: live ? '#4ade80' : '#94a3b8', fontSize: 10, fontWeight: live ? 'bold' : 'normal' },
+            labelBgStyle: { fill: live ? '#064e3b' : '#0f172a' },
+            style: { stroke: live ? '#10b981' : '#64748b', strokeWidth: e.width > 1 ? 3 : 1.5 },
+          };
+        }) as Edge[]
       );
       setLayouting(false);
     });
     return () => { cancelled = true; };
-  }, [graph, setNodes, setEdges]);
+  }, [graph, setNodes, setEdges, lookupValueAtTime, simTime]);
+
+  // Update live values when simTime changes
+  useEffect(() => {
+    if (!wave) return;
+    setNodes((nds) =>
+      nds.map((n) => ({
+        ...n,
+        data: {
+          ...n.data,
+          liveValue: lookupValueAtTime(n.data.node.label, simTime),
+        },
+      }))
+    );
+    setEdges((eds) =>
+      eds.map((e) => {
+        const live = lookupValueAtTime(e.data?.net || '', simTime);
+        return {
+          ...e,
+          label: live ? `${e.data?.net || ''} = ${live}` : e.data?.width > 1 ? `${e.data?.net}[${e.data.width - 1}:0]` : undefined,
+          labelStyle: { fill: live ? '#4ade80' : '#94a3b8', fontSize: 10, fontWeight: live ? 'bold' : 'normal' },
+          labelBgStyle: { fill: live ? '#064e3b' : '#0f172a' },
+          style: { ...e.style, stroke: live ? '#10b981' : '#64748b' },
+        };
+      })
+    );
+  }, [simTime, wave, lookupValueAtTime, setNodes, setEdges]);
 
   // Compute Fan-In / Fan-Out cone for selectedNodeId
   const coneInfo = useMemo(() => {
@@ -358,6 +415,41 @@ const Inner: React.FC<Props> = ({ graph }) => {
           </button>
         )}
 
+        {wave && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900/90 border border-slate-700/80 rounded-lg text-xs font-mono">
+            <Activity className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-slate-400 hidden sm:inline">{isTr ? 'Canlı Sinyal:' : 'Live Values:'}</span>
+            <span className="text-emerald-300 font-bold px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/40">
+              t = {simTime}ns
+            </span>
+            <button
+              type="button"
+              onClick={() => setSimTime((t) => Math.max(0, t - 10))}
+              className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
+              title="-10ns"
+            >
+              -10ns
+            </button>
+            <button
+              type="button"
+              onClick={() => setSimTime((t) => Math.min(wave.end_time || 100, t + 10))}
+              className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-[10px] flex items-center gap-1"
+              title="+10ns (+1 Clock)"
+            >
+              <span>+10ns</span>
+              <span className="text-[9px] opacity-75">(+1 Clock)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSimTime(0)}
+              className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 text-[10px]"
+              title="0ns"
+            >
+              0
+            </button>
+          </div>
+        )}
+
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -370,6 +462,7 @@ const Inner: React.FC<Props> = ({ graph }) => {
             <X className="w-3 h-3" />
           </button>
         )}
+
         {selectedNodeId && (
           <button className="px-2 py-1 rounded bg-sky-600 hover:bg-sky-500 text-xs flex items-center gap-1 font-mono" onClick={() => setSelectedNodeId(null)}>
             <span>Fan-In/Out: {selectedNodeId.replace(/^(cell:|port:)/, '')}</span>

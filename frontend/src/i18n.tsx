@@ -93,6 +93,10 @@ const DICT = {
     waveZeroTitle: 'Dalga Formu Telemetrisi Hazır Değil',
     waveZeroDesc: (tb: string) => `${tb || 'Testbench'} simülasyonu çalıştırıldığında VCD/FST dalga formları bellek içinde derlenip çözümlenir.`,
     runSim: 'Simülasyonu Çalıştır (F5)',
+    rtlDojoTooltip: 'RTL Dojo: Uygulamalı Donanım Tasarım Görevleri',
+    visualTbTooltip: 'Görsel Testbench Oluşturucu',
+    explainHardware: 'Donanım Karşılığını Açıkla',
+    liveBackAnnotation: 'Canlı Sinyal Bindirme',
   },
   en: {
     subtitle: 'SystemVerilog · Verilog · VHDL workspace · schematic · simulation · optimization',
@@ -184,6 +188,10 @@ const DICT = {
     waveZeroTitle: 'Waveform Telemetry Not Ready',
     waveZeroDesc: (tb: string) => `Compile and simulate ${tb || 'testbench'} to inspect live VCD/FST digital signal transitions in-memory.`,
     runSim: 'Run Simulation (F5)',
+    rtlDojoTooltip: 'RTL Dojo: Hands-on Hardware Design Challenges',
+    visualTbTooltip: 'Visual Testbench Builder',
+    explainHardware: 'Explain Hardware',
+    liveBackAnnotation: 'Live Signal Back-Annotation',
   },
 };
 

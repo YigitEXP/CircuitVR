@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Code2, Workflow, Activity, BarChart3, BrainCircuit } from 'lucide-react';
+import { Code2, Workflow, Activity, BarChart3, BrainCircuit, Terminal, FileCode2 } from 'lucide-react';
 import TopBar from './components/TopBar';
 import Explorer from './components/Explorer';
 import CodeEditor from './components/CodeEditor';
@@ -14,6 +14,8 @@ import ToolsDialog from './components/ToolsDialog';
 import DeveloperModal from './components/DeveloperModal';
 import OnboardingModal, { ONBOARDING_STORAGE_KEY } from './components/OnboardingModal';
 import CommandPalette from './components/CommandPalette';
+import RtlDojoModal, { DojoChallenge } from './components/RtlDojoModal';
+import VisualTbBuilderModal from './components/VisualTbBuilderModal';
 import { useI18n } from './i18n';
 import { APP_BUILD_TIME, APP_VERSION } from './version';
 import {
@@ -44,6 +46,8 @@ function App() {
   const [showTools, setShowTools] = useState(false);
   const [showDev, setShowDev] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
+  const [showDojo, setShowDojo] = useState(false);
+  const [showTbBuilder, setShowTbBuilder] = useState(false);
   const [showTour, setShowTour] = useState<boolean>(
     () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== '1'
   );
@@ -348,6 +352,88 @@ function App() {
       onSynth={runSynth}
       onStartTour={() => setShowTour(true)}
       onShowTools={() => setShowTools(true)}
+      onOpenDojo={() => setShowDojo(true)}
+      onOpenTbBuilder={() => setShowTbBuilder(true)}
+    />
+  );
+
+  const handleLoadDojoChallenge = (challenge: DojoChallenge) => {
+    const filename = `${challenge.id}.sv`;
+    const fullContent = `${challenge.starterCode}\n\n// ====================================================\n// Self-Checking Verification Testbench\n// ====================================================\n${challenge.testbenchCode}`;
+    const challengeTitle = challenge.titleTr || challenge.id;
+
+    if (!info) {
+      const dojoWs: WorkspaceInfo = {
+        root: `dojo://${challenge.id}`,
+        name: `RTL Dojo - ${challengeTitle}`,
+        files: [{
+          path: filename,
+          name: filename,
+          lang: 'sv',
+          group: 'rtl',
+          is_header: false,
+          size: fullContent.length,
+          lines: fullContent.split('\n').length,
+          modules: [{ name: challenge.id, line: 1 }],
+          packages: [],
+          interfaces: []
+        }],
+        modules: {
+          [challenge.id]: {
+            name: challenge.id,
+            file: filename,
+            line: 1,
+            group: 'rtl',
+            instances: [],
+            instantiated_by: [],
+            children: 0
+          }
+        },
+        rtl_tops: [challenge.id],
+        tb_tops: [`tb_${challenge.id}`],
+        default_top: challenge.id,
+        default_tb: `tb_${challenge.id}`,
+        has_rtl_dir: false,
+        has_tb_dir: false,
+        fingerprint: 'dojo',
+        warnings: [],
+      };
+      setInfo(dojoWs);
+    }
+    setFile({ path: filename, content: fullContent, saved: fullContent });
+    setTop(challenge.id);
+    setTb(`tb_${challenge.id}`);
+    setView('code');
+    setStale(true);
+    setShowDojo(false);
+    log('ok', `RTL Dojo görevi yüklendi: ${challengeTitle} (${challenge.id})`);
+  };
+
+  const handleSaveVisualTb = (tbFilename: string, tbCode: string, tbTopName: string) => {
+    setFile({ path: tbFilename, content: tbCode, saved: tbCode });
+    setTb(tbTopName);
+    setView('wave');
+    setStale(true);
+    setShowTbBuilder(false);
+    log('ok', `Görsel testbench kaydedildi: ${tbFilename} (${tbTopName})`);
+    setTimeout(() => {
+      runSim();
+    }, 120);
+  };
+
+  const dojoDialog = showDojo && (
+    <RtlDojoModal
+      onClose={() => setShowDojo(false)}
+      onLoadChallenge={handleLoadDojoChallenge}
+    />
+  );
+
+  const tbBuilderDialog = showTbBuilder && (
+    <VisualTbBuilderModal
+      activeTop={top || 'top_module'}
+      activeCode={file?.content || ''}
+      onClose={() => setShowTbBuilder(false)}
+      onSaveTb={handleSaveVisualTb}
     />
   );
 
@@ -359,6 +445,8 @@ function App() {
         {devDialog}
         {tourDialog}
         {paletteDialog}
+        {dojoDialog}
+        {tbBuilderDialog}
         <WelcomeScreen
           tools={tools}
           error={welcomeErr}
@@ -368,6 +456,7 @@ function App() {
           onLoaded={(i) => { applyInfo(i, true); log('ok', `Proje yüklendi: ${i.name}`); }}
           onShowTools={() => setShowTools(true)}
           onShowDev={() => setShowDev(true)}
+          onOpenDojo={() => setShowDojo(true)}
         />
       </div>
     );
@@ -380,6 +469,8 @@ function App() {
       {devDialog}
       {tourDialog}
       {paletteDialog}
+      {dojoDialog}
+      {tbBuilderDialog}
       <TopBar
         info={info} top={top} tb={tb} simTime={simTime} autoLint={autoLint} tools={tools} busy={busy}
         onTop={setTop} onTb={setTb} onSimTime={setSimTime} onAutoLint={setAutoLint}
@@ -396,7 +487,7 @@ function App() {
           />
         </aside>
         <div className="flex-1 flex flex-col min-w-0">
-          <nav className="flex border-b glass flex-shrink-0">
+          <nav className="flex items-center border-b glass flex-shrink-0 pr-2">
             {VIEWS.map((v) => {
               const Icon = v.icon;
               const lbl =
@@ -426,6 +517,27 @@ function App() {
                 </button>
               );
             })}
+
+            <div className="ml-auto flex items-center gap-2 py-1">
+              <button
+                type="button"
+                onClick={() => setShowDojo(true)}
+                className="px-2.5 py-1 rounded bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-500/40 text-xs flex items-center gap-1.5 transition font-medium"
+                title="RTL Dojo: Uygulamalı Donanım Tasarım Görevleri"
+              >
+                <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="hidden sm:inline">RTL Dojo</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTbBuilder(true)}
+                className="px-2.5 py-1 rounded bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/40 text-xs flex items-center gap-1.5 transition font-medium"
+                title="Görsel Testbench Oluşturucu"
+              >
+                <FileCode2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Görsel TB</span>
+              </button>
+            </div>
           </nav>
           <main className="flex-1 min-h-0 overflow-hidden">
             {view === 'code' && (file ? (
@@ -433,6 +545,7 @@ function App() {
                 file={file.path} content={file.content} dirty={dirty}
                 gotoLine={goto.line} gotoNonce={goto.nonce} diagnostics={problems}
                 onChange={(content) => setFile({ ...file, content })} onSave={saveFile}
+                onOpenTbBuilder={() => setShowTbBuilder(true)}
               />
             ) : (
               <div className="h-full flex items-center justify-center text-gray-500 text-sm">{tr.selectFilePrompt}</div>
@@ -441,12 +554,14 @@ function App() {
               <CircuitViewer
                 graph={graph} top={top} busy={busy === 'şematik'} stale={stale} error={schematicErr}
                 flatten={flatten} onFlatten={setFlatten} onGenerate={runSchematic}
+                wave={wave}
               />
             )}
             {view === 'wave' && (
               <WaveformViewer
                 wave={wave} tbTop={tb} busy={busy === 'simülasyon'} onRun={runSim}
                 status={sim && !sim.success ? (sim.error ?? '') : ''}
+                onOpenTbBuilder={() => setShowTbBuilder(true)}
               />
             )}
             {view === 'analysis' && (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Search, Play, Workflow, ShieldCheck, Cpu, BrainCircuit, Code2, Activity, BarChart3, Sparkles, Wrench, FileCode2, Languages, X,
+  Search, Play, Workflow, ShieldCheck, Cpu, BrainCircuit, Code2, Activity, BarChart3, Sparkles, Wrench, FileCode2, Languages, X, Terminal,
 } from 'lucide-react';
 import { WorkspaceInfo } from '../types';
 import { useI18n } from '../i18n';
@@ -27,6 +27,8 @@ interface Props {
   onSynth: () => void;
   onStartTour: () => void;
   onShowTools: () => void;
+  onOpenDojo?: () => void;
+  onOpenTbBuilder?: () => void;
 }
 
 export default function CommandPalette({
@@ -40,6 +42,8 @@ export default function CommandPalette({
   onSynth,
   onStartTour,
   onShowTools,
+  onOpenDojo,
+  onOpenTbBuilder,
 }: Props) {
   const { lang, setLang } = useI18n();
   const isTr = lang === 'tr';
@@ -105,6 +109,30 @@ export default function CommandPalette({
           onClose();
         },
       },
+      ...(onOpenDojo ? [{
+        id: 'rtl-dojo',
+        titleTr: 'RTL Dojo: Uygulamalı Mühendislik Görevleri (Shift Register, FIFO, MAC, AXI4-Stream)',
+        titleEn: 'RTL Dojo: Hands-on Hardware Challenges (Shift Register, FIFO, MAC, AXI4-Stream)',
+        categoryTr: 'Öğrenme & Laboratuvar',
+        categoryEn: 'Learning & Labs',
+        icon: Terminal,
+        action: () => {
+          onOpenDojo();
+          onClose();
+        },
+      }] : []),
+      ...(onOpenTbBuilder ? [{
+        id: 'visual-tb',
+        titleTr: 'Görsel Testbench Oluşturucu (Stimulus Tablosu & 1-Tık Testbench)',
+        titleEn: 'Visual Testbench Builder (Stimulus Grid & 1-Click Testbench)',
+        categoryTr: 'EDA Doğrulama',
+        categoryEn: 'EDA Verification',
+        icon: FileCode2,
+        action: () => {
+          onOpenTbBuilder();
+          onClose();
+        },
+      }] : []),
       {
         id: 'view-edgeai',
         titleTr: 'Edge AI & Biyosinyal (1D-CNN / DSP) Stüdyosunu Aç',

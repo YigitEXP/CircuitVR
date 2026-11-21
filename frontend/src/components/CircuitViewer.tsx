@@ -1,5 +1,5 @@
 import { Loader2, Workflow, Cpu, Layers } from 'lucide-react';
-import { SchematicGraph } from '../types';
+import { SchematicGraph, WaveData } from '../types';
 import SchematicViewer from './SchematicViewer';
 import { useI18n } from '../i18n';
 
@@ -12,9 +12,10 @@ interface Props {
   flatten: boolean;
   onFlatten: (v: boolean) => void;
   onGenerate: () => void;
+  wave?: WaveData | null;
 }
 
-export default function CircuitViewer({ graph, top, busy, stale, error, flatten, onFlatten, onGenerate }: Props) {
+export default function CircuitViewer({ graph, top, busy, stale, error, flatten, onFlatten, onGenerate, wave }: Props) {
   const { t: tr } = useI18n();
 
   return (
@@ -44,7 +45,7 @@ export default function CircuitViewer({ graph, top, busy, stale, error, flatten,
       {error && <p className="m-3 text-sm text-red-400 whitespace-pre-wrap font-mono">{error}</p>}
       {graph ? (
         <div className="p-3 flex-1 min-h-0">
-          <SchematicViewer graph={graph} />
+          <SchematicViewer graph={graph} wave={wave} />
         </div>
       ) : (
         !error && (

@@ -2,12 +2,12 @@
 
 <img src="frontend/public/favicon.svg" alt="CircuitVR Logo" width="88" height="88" />
 
-# CircuitVR (V 2.16)
+# CircuitVR (V 2.17)
 
 ### **SystemVerilog · Verilog · VHDL RTL, Hardware Security & Edge AI Co-Design Studio**
 
-*Gerçek Zamanlı Sentez Şematiği & Kritik Yol ($F_{\max}$), VCD/Analog Dalga Formu, Tek-Tık Auto-Fix & Donanım Güvenlik Denetçisi (SecLinter), Çift Yönlü FSM Durum Diyagramı ve Python (`.pkl`/`.npy`/`.pt`/`.mem`) -> Sabit Noktalı ($Qm.n$) 1D-CNN Biyosinyal Donanım Sentezleyicisi*  
-*Real-Time Synthesis Schematics & Critical Path ($F_{\max}$), VCD/Analog Waveform, One-Click Auto-Fix & Hardware Security Linter (SecLinter), Two-Way FSM State Diagram & Python (`.pkl`/`.npy`/`.pt`/`.mem`) -> Fixed-Point ($Qm.n$) 1D-CNN Biosignal Hardware Studio*
+*Dinamik Bulut RTL Ayrıştırıcı, RTL Dojo Uygulamalı Görevler, Görsel Testbench Oluşturucu, Şematik Canlı Sinyal Bindirme & "Donanım Karşılığını Açıkla" Sentez Analizcisi, Gerçek Zamanlı Sentez Şematiği & Kritik Yol ($F_{\max}$), VCD/Analog Dalga Formu, Tek-Tık Auto-Fix & Donanım Güvenlik Denetçisi (SecLinter), Çift Yönlü FSM Durum Diyagramı ve Python (`.pkl`/`.npy`/`.pt`/`.mem`) -> Sabit Noktalı ($Qm.n$) 1D-CNN Biyosinyal Donanım Sentezleyicisi*  
+*Dynamic Cloud RTL Parser, RTL Dojo Hands-on Challenges, Visual Testbench Builder, Schematic Live Signal Back-Annotation & "Explain Hardware" Synthesis Inspector, Real-Time Synthesis Schematics & Critical Path ($F_{\max}$), VCD/Analog Waveform, One-Click Auto-Fix & Hardware Security Linter (SecLinter), Two-Way FSM State Diagram & Python (`.pkl`/`.npy`/`.pt`/`.mem`) -> Fixed-Point ($Qm.n$) 1D-CNN Biosignal Hardware Studio*
 
 [![HDL Support](https://img.shields.io/badge/HDL-SystemVerilog%20%7C%20Verilog%20%7C%20VHDL-6366f1?style=for-the-badge)](#)
 [![Edge AI](https://img.shields.io/badge/Edge%20AI-PyTorch%20.pt%2F.pkl%2F.npy%20%7C%20BatchNorm%20Fold%20%7C%20Qm.n-8b5cf6?style=for-the-badge)](#)
@@ -62,7 +62,10 @@ CircuitVR'ın son sürümüyle (V 2.16) çalışan gerçek bir **1D-CNN Biyosiny
 3. **Testbench ile Simüle Edip VCD + Analog Dalga Formunu Analiz Edebildiği** (Icarus Verilog + **Canlı Ölçüm HUD Paneli ($\Delta t$, $\text{MHz}$)**, **Sinyal Arama/Filtreleme Barı**, **Çift Tık Radix Seçici**, **Analog Biyosinyal Çizimi**, **SIGNED 2'ye Tümleyen Radix** ve **`X/Z` Belirsiz Durum Kök-Neden Tablosu**),
 4. **Tek Tıkla RTL Auto-Fix, Diff Önizleme ve Donanım Güvenlik Denetiminden (`SecLinter`) Geçirebildiği** (`0–100` Optimizasyon Skoru + **Diff Önizleme Modalı** + **10 Kademeli Geri Al (`Undo`)** + **`// circuitvr-ignore`** + **CDC / Kombinasyonel Döngü / Nadir Tetiklenen Trojan Denetimi**),
 5. **Çift Yönlü FSM Durum Diyagramı ile Kodu Birbirine Bağlayabildiği** (SVG durum dairesine veya geçiş okuna tıklandığında Monaco editöründeki ilgili satıra otomatik odaklanan ve parlayan **Two-Way Highlight** motoru),
-6. **Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu (`Edge AI Lab`)** ile Python'da üretilen **`.pkl` / `.pickle` (Güvenli Kısıtlı Unpickler), `.npy`, `.npz`, PyTorch `.pt` / `.pth`, `.json`, `.csv`, `.coe`, `.mem`** modellerini belirgin bir **Dropzone** üzerinden içeri aktarıp; **PyTorch `BatchNorm1d` Katlama (`Fold into Conv1D`)**, **RNE Niceleme**, **Doyma (`Saturate`) vs. Taşma (`Wrap`)**, **Pareto (`SQNR dB vs. LUT`) Grafiği**, **DSP48 Dilim Kullanım İlerleme Çubuğu**, **Tam Ekran (Maximize) Modalları** ve **bit-doğru (bit-exact) ECG/EEG Golden Testbench + RTL hızlandırıcısını** tek tıkla üretebildiği
+6. **Edge AI & Biyosinyal (1D-CNN / DSP) Donanım Ortak-Tasarım Stüdyosu (`Edge AI Lab`)** ile Python'da üretilen **`.pkl` / `.pickle` (Güvenli Kısıtlı Unpickler), `.npy`, `.npz`, PyTorch `.pt` / `.pth`, `.json`, `.csv`, `.coe`, `.mem`** modellerini belirgin bir **Dropzone** üzerinden içeri aktarıp; **PyTorch `BatchNorm1d` Katlama (`Fold into Conv1D`)**, **RNE Niceleme**, **Doyma (`Saturate`) vs. Taşma (`Wrap`)**, **Pareto (`SQNR dB vs. LUT`) Grafiği**, **DSP48 Dilim Kullanım İlerleme Çubuğu**, **Tam Ekran (Maximize) Modalları** ve **bit-doğru (bit-exact) ECG/EEG Golden Testbench + RTL hızlandırıcısını** tek tıkla üretebildiği,
+7. **RTL Dojo & Mühendislik Öğrenme Modülleri (V 2.17)** ile SIPO Shift Register, Senkron FIFO, Pipelined Fixed-Point MAC ve AXI4-Stream Slice gibi 4 aşamalı interaktif donanım görevlerini yerleşik self-checking testbench doğrulaması ile çözebildiği,
+8. **Dinamik Bulut RTL Parser & Şematik Canlı Sinyal Bindirme (V 2.17)** ile aktif koddaki parametrik portları, unpacked array boyutlarını, `$adff`/`$sdff` yazmaçları, Clock Enable hatlarını ve döngü açma (unrolling) işlemlerini Vercel/bulut fallback modunda dinamik şematiğe dökebildiği, imleç zamanındaki ($t$) sinyal değerlerini kablo etiketlerine canlı rozet olarak yansıtabildiği ve "Donanım Karşılığını Açıkla" ile kod bloklarının fiziksel FPGA primitiflerine dönüşümünü inceleyebildiği,
+9. **Görsel Testbench Oluşturucu (V 2.17)** ile saat periyodu, reset kutupluluğu ve zaman adımlı giriş uyarı tablosu üzerinden tek tıkla sentezlenebilir `tb_<top>.sv` dosyası üretebildiği
 
 modern, karanlık temalı (Dark Mode & Glassmorphism) ve **Dual-Runtime (Yerel Tam EDA + Vercel Serverless Bulut)** destekli bir donanım IDEsidir.
 

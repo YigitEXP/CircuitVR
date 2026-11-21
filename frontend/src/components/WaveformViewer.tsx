@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Maximize2, ZoomIn, ZoomOut, ListPlus, X, Loader2, Activity, Ruler, AlertTriangle, FileCode } from 'lucide-react';
+import { Play, Maximize2, ZoomIn, ZoomOut, ListPlus, X, Loader2, Activity, Ruler, AlertTriangle, FileCode, Clock } from 'lucide-react';
 import { WaveData, WaveSignal } from '../types';
 import { useI18n } from '../i18n';
 
@@ -208,6 +208,137 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun, onOpe
     return { dtStr, freqMhz };
   }, [markerA, markerB, psTick]);
 
+  // Clock signal detection
+  const clkSignal = useMemo(() => {
+    if (!wave) return null;
+    return (
+      wave.signals.find((s) => s.width === 1 && /(^|_)(clk|clock)(_|$)/i.test(s.name)) ||
+      wave.signals.find((s) => s.width === 1 && /clk/i.test(s.name)) ||
+      wave.signals.find((s) => s.width === 1) ||
+      null
+    );
+  }, [wave]);
+
+  // Extract all posedge clk timestamps
+  const posedgeTimes = useMemo(() => {
+    if (!wave || !clkSignal) return [];
+    const ch = wave.changes[clkSignal.id] ?? [];
+    const times: number[] = [];
+    for (let i = 1; i < ch.length; i++) {
+      const prev = ch[i - 1][1];
+      const curr = ch[i][1];
+      if ((prev === '0' || prev === 'x' || prev === 'z') && curr === '1') {
+        times.push(ch[i][0]);
+      }
+    }
+    return times;
+  }, [wave, clkSignal]);
+
+  // Closest clock index to active cursor/Marker A
+  const currentClkIndex = useMemo(() => {
+    if (posedgeTimes.length === 0) return -1;
+    const t = markerA ?? cursorT ?? view[0];
+    let bestIdx = 0;
+    let minDiff = Math.abs(posedgeTimes[0] - t);
+    for (let i = 1; i < posedgeTimes.length; i++) {
+      const diff = Math.abs(posedgeTimes[i] - t);
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }, [posedgeTimes, markerA, cursorT, view]);
+
+  // Snap-to-Clock step navigation
+  const stepClock = useCallback((delta: number) => {
+    if (posedgeTimes.length === 0) return;
+    const nextIdx = Math.max(0, Math.min(posedgeTimes.length - 1, currentClkIndex + delta));
+    const newT = posedgeTimes[nextIdx];
+    setMarkerA(newT);
+    setView(([t0, t1]) => {
+      if (newT < t0 || newT > t1) {
+        const span = t1 - t0;
+        return [Math.max(0, newT - span * 0.2), newT + span * 0.8];
+      }
+      return [t0, t1];
+    });
+  }, [posedgeTimes, currentClkIndex]);
+
+  // Keyboard navigation for ArrowLeft / ArrowRight
+  useEffect(() => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        stepClock(1);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        stepClock(-1);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [stepClock]);
+
+  // Saat Vurusu Adim Ozetleyici ("Bu Clock'ta Ne Oldu?" HUD)
+  const clockStepSummary = useMemo(() => {
+    if (!wave || currentClkIndex < 0 || posedgeTimes.length === 0) return null;
+    const clkTime = posedgeTimes[currentClkIndex];
+
+    const transitions: {
+      id: string;
+      name: string;
+      short: string;
+      width: number;
+      prevVal: string;
+      currVal: string;
+      changed: boolean;
+      isControl: boolean;
+    }[] = [];
+
+    rows.forEach((s) => {
+      const ch = wave.changes[s.id] ?? [];
+      if (!ch.length) return;
+      const iPrev = lastAtOrBefore(ch, Math.max(0, clkTime - 1));
+      const iCurr = lastAtOrBefore(ch, clkTime + 1);
+      const rawPrev = iPrev >= 0 ? ch[iPrev][1] : '0';
+      const rawCurr = iCurr >= 0 ? ch[iCurr][1] : rawPrev;
+      const prevVal = formatValue(rawPrev, s.width, radix);
+      const currVal = formatValue(rawCurr, s.width, radix);
+      const changed = rawPrev !== rawCurr;
+      const isControl = /(rst|valid|ready|enable|state|counter|data)/i.test(s.name);
+
+      if (changed || isControl) {
+        transitions.push({
+          id: s.id,
+          name: s.name,
+          short: s.short || s.name,
+          width: s.width,
+          prevVal,
+          currVal,
+          changed,
+          isControl,
+        });
+      }
+    });
+
+    transitions.sort((a, b) => {
+      if (a.changed && !b.changed) return -1;
+      if (!a.changed && b.changed) return 1;
+      return 0;
+    });
+
+    return {
+      clockNumber: currentClkIndex + 1,
+      totalClocks: posedgeTimes.length,
+      clkTime,
+      clkTimeStr: formatTime(clkTime, psTick),
+      transitions: transitions.slice(0, 10),
+      totalChanged: transitions.filter((t) => t.changed).length,
+    };
+  }, [wave, currentClkIndex, posedgeTimes, rows, radix, psTick]);
+
   const measurementRows = useMemo(() => {
     if (!wave) return [];
     const tStart = markerA !== null && markerB !== null ? Math.min(markerA, markerB) : 0;
@@ -415,10 +546,10 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun, onOpe
             type="button"
             onClick={onOpenTbBuilder}
             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 text-xs flex items-center gap-1.5 transition font-semibold"
-            title={isTr ? 'Görsel Testbench Oluşturucu' : 'Visual Testbench Builder'}
+            title={isTr ? 'Kolay Test Senaryosu Oluşturucu' : 'Visual Test Scenario Builder'}
           >
             <FileCode className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{isTr ? 'Görsel TB Üret' : 'Visual TB'}</span>
+            <span>{isTr ? 'Kolay Test Senaryosu' : 'Test Scenario'}</span>
           </button>
         )}
         <span className="text-xs text-gray-400">{tbTop ? `tb: ${tbTop}` : (isTr ? 'Testbench seçilmedi' : 'No testbench selected')}</span>
@@ -547,13 +678,87 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun, onOpe
                 className="w-full py-2 px-4 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/40 text-xs font-semibold flex items-center justify-center gap-2 transition"
               >
                 <FileCode className="w-4 h-4 text-emerald-400" />
-                <span>{isTr ? 'Görsel Testbench Oluştur' : 'Build Visual Testbench'}</span>
+                <span>{isTr ? 'Kolay Test Senaryosu Oluştur' : 'Build Test Scenario'}</span>
               </button>
             )}
           </div>
         </div>
       ) : (
         <>
+          {/* Saat Vurusu Adim Ozetleyici ("Bu Clock'ta Ne Oldu?" HUD) */}
+          {clockStepSummary && (
+            <div className="flex items-center gap-2.5 px-3 py-1.5 bg-slate-900/95 border-b border-indigo-500/30 text-xs font-mono overflow-x-auto shadow-inner flex-shrink-0">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <Clock className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="font-semibold text-slate-100">
+                  Clock #{clockStepSummary.clockNumber}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-500/40">
+                  t = {clockStepSummary.clkTimeStr}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  ({clockStepSummary.clockNumber} / {clockStepSummary.totalClocks})
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => stepClock(-1)}
+                  disabled={currentClkIndex <= 0}
+                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 text-[10px] flex items-center gap-0.5 border border-slate-700 transition"
+                  title={isTr ? 'Önceki saat darbesine atla (Sol Ok)' : 'Previous clock edge (Left Arrow)'}
+                >
+                  <span>{'<'}</span>
+                  <span>{isTr ? 'Önceki Clock' : 'Prev Clock'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => stepClock(1)}
+                  disabled={currentClkIndex >= posedgeTimes.length - 1}
+                  className="px-2 py-0.5 rounded bg-indigo-700 hover:bg-indigo-600 disabled:opacity-40 text-white font-semibold text-[10px] flex items-center gap-0.5 transition"
+                  title={isTr ? 'Sonraki saat darbesine atla (Sağ Ok)' : 'Next clock edge (Right Arrow)'}
+                >
+                  <span>{isTr ? 'Sonraki Clock' : 'Next Clock'}</span>
+                  <span>{'>'}</span>
+                </button>
+              </div>
+
+              <div className="h-4 w-px bg-slate-700 flex-shrink-0" />
+
+              {/* Transition Cards */}
+              <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0 py-0.5">
+                <span className="text-[11px] text-slate-400 font-sans flex-shrink-0">
+                  {isTr ? 'Saat Değişimleri:' : 'Cycle Transitions:'}
+                </span>
+                {clockStepSummary.transitions.length > 0 ? (
+                  clockStepSummary.transitions.map((t) => (
+                    <div
+                      key={t.id}
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono flex-shrink-0 border ${
+                        t.changed
+                          ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-200'
+                          : 'bg-slate-800/60 border-slate-700 text-slate-300'
+                      }`}
+                      title={t.name}
+                    >
+                      <span className="font-semibold text-slate-200">{t.short}:</span>
+                      <span className="text-slate-400">{t.prevVal}</span>
+                      <span className="text-slate-500">{'->'}</span>
+                      <span className={t.changed ? 'text-emerald-300 font-bold' : 'text-slate-300'}>
+                        {t.currVal}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <span className="text-[11px] text-slate-500 italic">
+                    {isTr ? 'Bu saat vuruşunda yazmaç durumları korundu.' : 'States preserved this cycle.'}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex border-b border-slate-700 flex-shrink-0">
             <div style={{ width: NAME_W }} className="px-3 flex items-center justify-between text-[11px] font-mono text-gray-400 bg-dark flex-shrink-0">
               <span className="text-amber-300">A: {markerA !== null ? formatTime(markerA, psTick) : (cursorT !== null ? formatTime(cursorT, psTick) : '—')}</span>

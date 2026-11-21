@@ -11,6 +11,7 @@ interface Props {
   onOpenFile: (path: string, line?: number) => void;
   onSelectTop: (m: string) => void;
   onSelectTb: (m: string) => void;
+  onOpenTbBuilder?: () => void;
 }
 
 function Section({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
@@ -30,7 +31,7 @@ function Section({ title, children, right }: { title: string; children: ReactNod
   );
 }
 
-export default function Explorer({ info, top, tb, activeFile, onOpenFile, onSelectTop, onSelectTb }: Props) {
+export default function Explorer({ info, top, tb, activeFile, onOpenFile, onSelectTop, onSelectTb, onOpenTbBuilder }: Props) {
   const { t: tr } = useI18n();
   const groups: { id: 'rtl' | 'tb'; label: string }[] = [
     { id: 'rtl', label: 'rtl' },
@@ -110,6 +111,22 @@ export default function Explorer({ info, top, tb, activeFile, onOpenFile, onSele
         const files = info.files.filter((f) => f.group === g.id && !f.is_header);
         return (
           <Section key={g.id} title={g.label} right={<span className="text-[10px]">{files.length}</span>}>
+            {g.id === 'tb' && onOpenTbBuilder && (
+              <div className="px-2 pb-1.5">
+                <button
+                  type="button"
+                  onClick={onOpenTbBuilder}
+                  className="w-full text-left px-2 py-1 rounded bg-emerald-950/40 hover:bg-emerald-900/40 border border-emerald-500/30 text-emerald-300 hover:text-emerald-200 text-[11px] font-mono flex items-center justify-between transition"
+                  title="Kolay Test Senaryosu Olusturucu"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <FlaskConical className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>{tr.easyTestScenario || 'Kolay Test Senaryosu'}</span>
+                  </span>
+                  <span className="text-[9px] px-1 rounded bg-emerald-900/60 text-emerald-300 font-bold">+</span>
+                </button>
+              </div>
+            )}
             {files.length === 0 && <div className="pl-6 text-xs text-slate-500">{tr.noFiles}</div>}
             {files.map(fileRow)}
           </Section>

@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { WorkspaceInfo } from '../types';
 import { useI18n } from '../i18n';
+import { RTL_SNIPPETS } from '../services/rtlSnippets';
 
 interface CommandItem {
   id: string;
@@ -29,6 +30,7 @@ interface Props {
   onShowTools: () => void;
   onOpenDojo?: () => void;
   onOpenTbBuilder?: () => void;
+  onInsertSnippet?: (code: string) => void;
 }
 
 export default function CommandPalette({
@@ -44,6 +46,7 @@ export default function CommandPalette({
   onShowTools,
   onOpenDojo,
   onOpenTbBuilder,
+  onInsertSnippet,
 }: Props) {
   const { lang, setLang } = useI18n();
   const isTr = lang === 'tr';
@@ -133,6 +136,19 @@ export default function CommandPalette({
           onClose();
         },
       }] : []),
+      ...RTL_SNIPPETS.map((s) => ({
+        id: `snippet-${s.id}`,
+        titleTr: `RTL Yapı Taşı Ekle: ${s.nameTr}`,
+        titleEn: `Insert RTL Snippet: ${s.nameEn}`,
+        categoryTr: 'RTL Yapı Taşı (Snippets)',
+        categoryEn: 'RTL Snippets',
+        icon: FileCode2,
+        action: () => {
+          onInsertSnippet?.(s.code);
+          onSelectView('code');
+          onClose();
+        },
+      })),
       {
         id: 'view-edgeai',
         titleTr: 'Edge AI & Biyosinyal (1D-CNN / DSP) Stüdyosunu Aç',

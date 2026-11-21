@@ -1,8 +1,10 @@
 import { KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Cpu, FileCode, AlertTriangle, CheckCircle2, X, Zap } from 'lucide-react';
+import { Cpu, FileCode, AlertTriangle, CheckCircle2, X, Zap, Layers, HelpCircle, ArrowRight, Copy, Check, ChevronDown } from 'lucide-react';
 import { Diagnostic } from '../types';
 import { useI18n } from '../i18n';
 import { explainRtlHardware, HardwareExplainerResult } from '../services/hardwareExplainer';
+import { RTL_SNIPPETS, RtlSnippet } from '../services/rtlSnippets';
+import { explainRtlError } from '../services/errorExplainer';
 
 const LINE_H = 20;
 
@@ -35,15 +37,21 @@ export default function CodeEditor({
   const gutterRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const [hardwareReport, setHardwareReport] = useState<HardwareExplainerResult | null>(null);
+  const [showSnippets, setShowSnippets] = useState(false);
+  const [selectedMentorDiag, setSelectedMentorDiag] = useState<Diagnostic | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [copiedMentorExample, setCopiedMentorExample] = useState(false);
+
+  const fileDiags = useMemo(() => diagnostics.filter((d) => d.file === file), [diagnostics, file]);
 
   const lineCount = useMemo(() => content.split('\n').length, [content]);
   const marks = useMemo(() => {
     const m = new Map<number, 'error' | 'warning'>();
-    diagnostics.filter((d) => d.file === file).forEach((d) => {
+    fileDiags.forEach((d) => {
       if (m.get(d.line) !== 'error') m.set(d.line, d.severity);
     });
     return m;
-  }, [diagnostics, file]);
+  }, [fileDiags]);
 
   const sync = () => {
     const ta = taRef.current;
@@ -63,6 +71,26 @@ export default function CodeEditor({
     }
     const report = explainRtlHardware(snippet, isTr);
     setHardwareReport(report);
+  };
+
+  const insertSnippet = (snippet: RtlSnippet) => {
+    const ta = taRef.current;
+    if (!ta) {
+      onChange(content + '\n' + snippet.code);
+      setShowSnippets(false);
+      setContextMenu(null);
+      return;
+    }
+    const start = ta.selectionStart ?? content.length;
+    const end = ta.selectionEnd ?? content.length;
+    const next = content.slice(0, start) + snippet.code + content.slice(end);
+    onChange(next);
+    setShowSnippets(false);
+    setContextMenu(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(start + snippet.code.length, start + snippet.code.length);
+    });
   };
 
   useEffect(() => {
@@ -101,15 +129,66 @@ export default function CodeEditor({
         </span>
         {dirty && <span className="text-yellow-400">{tr.unsaved}</span>}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 relative">
+          {/* Neden Hata Aldim? Mentor Button (If active file has errors) */}
+          {fileDiags.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSelectedMentorDiag(fileDiags[0])}
+              className="px-2.5 py-1 rounded bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 border border-amber-500/40 text-xs flex items-center gap-1.5 transition font-medium"
+              title={isTr ? 'Bu dosyadaki hatalari insan dilinde cozumle' : 'Explain file errors in plain human language'}
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+              <span>{isTr ? `Neden Hata Aldim? (${fileDiags.length})` : `Why Did I Get Errors? (${fileDiags.length})`}</span>
+            </button>
+          )}
+
+          {/* Snippets Dropdown Trigger */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowSnippets(!showSnippets)}
+              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 hover:text-sky-200 border border-sky-500/30 text-xs flex items-center gap-1.5 transition font-medium"
+              title={isTr ? 'Temel RTL yapi taslarini (Snippets) koda ekle' : 'Insert RTL Snippets and hardware templates'}
+            >
+              <Layers className="w-3.5 h-3.5 text-sky-400" />
+              <span>{isTr ? 'Yapi Tasi Ekle' : 'RTL Snippets'}</span>
+              <ChevronDown className="w-3 h-3 text-slate-400" />
+            </button>
+
+            {showSnippets && (
+              <div className="absolute right-0 top-full mt-1.5 w-80 rounded-xl bg-slate-950 border border-slate-700 shadow-2xl p-2 z-40 space-y-1 backdrop-blur-xl">
+                <div className="px-2 py-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800 mb-1">
+                  {isTr ? 'Temel Donanim Kaliplari (Snippets)' : 'Hardware Snippet Templates'}
+                </div>
+                {RTL_SNIPPETS.map((snip) => (
+                  <button
+                    key={snip.id}
+                    type="button"
+                    onClick={() => insertSnippet(snip)}
+                    className="w-full text-left p-2 rounded-lg hover:bg-slate-800/80 border border-transparent hover:border-slate-700 transition group"
+                  >
+                    <div className="text-xs font-semibold text-sky-300 group-hover:text-white flex items-center justify-between">
+                      <span>{isTr ? snip.nameTr : snip.nameEn}</span>
+                      <ArrowRight className="w-3 h-3 text-slate-500 group-hover:text-sky-400 transition" />
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                      {isTr ? snip.descTr : snip.descEn}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={handleExplainHardware}
             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-indigo-200 border border-indigo-500/30 text-xs flex items-center gap-1.5 transition"
-            title={isTr ? 'Seçili kod bloğunun FPGA üzerinde hangi fiziksel kapı ve yazmaçlara dönüştüğünü açıklar' : 'Explains synthesized FPGA primitives for selected code'}
+            title={isTr ? 'Secili kod blogunun FPGA uzerinde hangi fiziksel kapi ve yazmaclara donustugunu aciklar' : 'Explains synthesized FPGA primitives for selected code'}
           >
             <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-            <span>{isTr ? 'Donanım Karşılığını Açıkla' : 'Explain Hardware'}</span>
+            <span>{isTr ? 'Donanim Karsiligini Acikla' : 'Explain Hardware'}</span>
           </button>
 
           {onOpenTbBuilder && (
@@ -117,10 +196,10 @@ export default function CodeEditor({
               type="button"
               onClick={onOpenTbBuilder}
               className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 text-xs flex items-center gap-1.5 transition"
-              title={isTr ? 'Görsel Testbench Oluşturucuyu Aç' : 'Open Visual Testbench Builder'}
+              title={isTr ? 'Gorsel Testbench Olusturucuyu Ac' : 'Open Visual Testbench Builder'}
             >
               <FileCode className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{isTr ? 'Görsel TB' : 'Visual TB'}</span>
+              <span>{isTr ? 'Gorsel TB' : 'Visual TB'}</span>
             </button>
           )}
 
@@ -133,18 +212,30 @@ export default function CodeEditor({
           </button>
         </div>
       </div>
-      <div className="flex-1 relative overflow-hidden bg-darker font-mono text-[13px]">
-        <div className="absolute inset-y-0 left-0 w-12 overflow-hidden bg-dark border-r border-slate-800 text-right text-slate-500 pr-2">
+      <div className="flex-1 relative overflow-hidden bg-darker font-mono text-[13px]" onClick={() => { if (showSnippets) setShowSnippets(false); if (contextMenu) setContextMenu(null); }}>
+        <div className="absolute inset-y-0 left-0 w-12 overflow-hidden bg-dark border-r border-slate-800 text-right text-slate-500 pr-2 select-none">
           <div ref={gutterRef}>
             {Array.from({ length: lineCount }, (_, i) => {
-              const sev = marks.get(i + 1);
+              const lineNo = i + 1;
+              const sev = marks.get(lineNo);
+              const lineDiag = fileDiags.find((d) => d.line === lineNo);
               return (
                 <div
                   key={i}
                   style={lineStyle}
-                  className={sev === 'error' ? 'text-red-400 font-bold' : sev === 'warning' ? 'text-yellow-400 font-bold' : ''}
+                  onClick={() => {
+                    if (lineDiag) setSelectedMentorDiag(lineDiag);
+                  }}
+                  className={`cursor-pointer ${
+                    sev === 'error'
+                      ? 'text-red-400 font-bold bg-red-950/30'
+                      : sev === 'warning'
+                      ? 'text-yellow-400 font-bold bg-yellow-950/20'
+                      : 'hover:text-slate-300'
+                  }`}
+                  title={lineDiag ? `${lineDiag.message} (Tikla: Neden hata aldim?)` : undefined}
                 >
-                  {i + 1}
+                  {lineNo}
                 </div>
               );
             })}
@@ -181,9 +272,64 @@ export default function CodeEditor({
           onChange={(e) => onChange(e.target.value)}
           onScroll={sync}
           onKeyDown={onKeyDown}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY });
+          }}
           style={{ lineHeight: `${LINE_H}px`, tabSize: 2 }}
           className="absolute inset-y-0 left-12 right-0 pl-3 bg-transparent text-gray-100 outline-none resize-none whitespace-pre overflow-auto"
         />
+
+        {/* Right-Click Context Menu */}
+        {contextMenu && (
+          <div
+            style={{ top: Math.min(contextMenu.y - 40, window.innerHeight - 280), left: Math.min(contextMenu.x - 20, window.innerWidth - 300) }}
+            className="fixed z-50 w-64 rounded-xl bg-slate-950/95 border border-slate-700 shadow-2xl p-2 backdrop-blur-xl space-y-1 font-sans text-xs"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setContextMenu(null);
+                handleExplainHardware();
+              }}
+              className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-800 text-indigo-300 hover:text-white flex items-center gap-2 transition"
+            >
+              <Cpu className="w-4 h-4 text-indigo-400" />
+              <span>{isTr ? 'Donanim Karsiligini Acikla' : 'Explain Hardware'}</span>
+            </button>
+
+            {fileDiags.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setContextMenu(null);
+                  setSelectedMentorDiag(fileDiags[0]);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-800 text-amber-300 hover:text-white flex items-center gap-2 transition"
+              >
+                <HelpCircle className="w-4 h-4 text-amber-400" />
+                <span>{isTr ? 'Neden Hata Aldim? (Mentor)' : 'Why Did I Get Errors?'}</span>
+              </button>
+            )}
+
+            <div className="border-t border-slate-800 my-1 pt-1 px-2 text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
+              {isTr ? 'RTL Yapi Tasi Ekle' : 'Insert RTL Snippet'}
+            </div>
+
+            {RTL_SNIPPETS.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => insertSnippet(s)}
+                className="w-full text-left px-2.5 py-1.5 rounded hover:bg-slate-800 text-slate-300 hover:text-sky-300 flex items-center justify-between transition"
+              >
+                <span className="truncate">{isTr ? s.nameTr : s.nameEn}</span>
+                <ArrowRight className="w-3 h-3 opacity-50" />
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Hardware Synthesis Explainer Modal / Drawer */}
         {hardwareReport && (
@@ -294,6 +440,118 @@ export default function CodeEditor({
             </div>
           </div>
         )}
+
+        {/* Error Mentor Drawer ("Neden Hata Aldım?") */}
+        {selectedMentorDiag && (() => {
+          const explanation = explainRtlError(selectedMentorDiag.message, isTr);
+          return (
+            <div className="absolute inset-y-0 right-0 w-full max-w-lg bg-slate-950/95 border-l border-amber-500/40 p-5 shadow-2xl backdrop-blur-xl z-40 flex flex-col overflow-y-auto">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <HelpCircle className="w-5 h-5 text-amber-400" />
+                  <div>
+                    <h3 className="font-sans font-bold text-slate-100 text-sm">
+                      {isTr ? 'Neden Hata Aldım? (Mentor Paneli)' : 'Why Did I Get This Error? (Mentor Panel)'}
+                    </h3>
+                    <span className="font-mono text-[11px] text-slate-400">
+                      {selectedMentorDiag.file}:{selectedMentorDiag.line}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMentorDiag(null)}
+                  className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <span className="text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-500/40">
+                  {explanation.ruleCode}
+                </span>
+                <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded ${
+                  selectedMentorDiag.severity === 'error'
+                    ? 'bg-red-950 text-red-300 border border-red-500/40'
+                    : 'bg-yellow-950 text-yellow-300 border border-yellow-500/40'
+                }`}>
+                  {selectedMentorDiag.severity.toUpperCase()}
+                </span>
+              </div>
+
+              <div className="mt-2 text-xs font-mono text-slate-300 bg-slate-900/90 p-2.5 rounded border border-slate-800">
+                {selectedMentorDiag.message}
+              </div>
+
+              {/* 1. Ne Oldu? */}
+              <div className="mt-4 space-y-1">
+                <label className="text-[11px] font-sans font-semibold text-slate-400 uppercase tracking-wider block">
+                  1. {isTr ? 'Ne Oldu?' : 'What Happened?'}
+                </label>
+                <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 text-xs font-sans text-slate-200 leading-relaxed">
+                  {explanation.whatHappened}
+                </div>
+              </div>
+
+              {/* 2. Donanımda Ne Anlama Gelir? */}
+              <div className="mt-4 space-y-1">
+                <label className="text-[11px] font-sans font-semibold text-amber-400 uppercase tracking-wider block">
+                  2. {isTr ? 'Donanımda Ne Anlama Gelir?' : 'What Does It Mean in Hardware?'}
+                </label>
+                <div className="p-3 rounded-lg bg-amber-950/20 border border-amber-500/30 text-xs font-sans text-amber-200/90 leading-relaxed">
+                  {explanation.hardwareMeaning}
+                </div>
+              </div>
+
+              {/* 3. Doğru Yazım Örneği */}
+              <div className="mt-4 space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-sans font-semibold text-emerald-400 uppercase tracking-wider block">
+                    3. {isTr ? 'Doğru Yazım Örneği' : 'Correct Code Example'}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(explanation.correctExample);
+                      setCopiedMentorExample(true);
+                      setTimeout(() => setCopiedMentorExample(false), 2000);
+                    }}
+                    className="text-[11px] font-mono text-slate-400 hover:text-emerald-300 flex items-center gap-1 transition"
+                  >
+                    {copiedMentorExample ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedMentorExample ? (isTr ? 'Kopyalandı' : 'Copied') : (isTr ? 'Kopyala' : 'Copy')}</span>
+                  </button>
+                </div>
+                <pre className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-300 overflow-x-auto whitespace-pre">
+                  {explanation.correctExample}
+                </pre>
+              </div>
+
+              {/* Action: Add snippet to code */}
+              <div className="mt-5 pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    insertSnippet({
+                      id: 'fix_example',
+                      nameTr: 'Düzeltme Kodu',
+                      nameEn: 'Fix Code',
+                      descTr: 'Mentor örnek kodu',
+                      descEn: 'Mentor example code',
+                      code: '\n' + explanation.correctExample + '\n',
+                    });
+                    setSelectedMentorDiag(null);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition shadow-sm"
+                >
+                  <ArrowRight className="w-3.5 h-3.5" />
+                  <span>{isTr ? 'Örnek Kodu Editöre Ekle' : 'Insert Example into Editor'}</span>
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

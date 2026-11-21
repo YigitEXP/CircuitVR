@@ -354,6 +354,14 @@ function App() {
       onShowTools={() => setShowTools(true)}
       onOpenDojo={() => setShowDojo(true)}
       onOpenTbBuilder={() => setShowTbBuilder(true)}
+      onInsertSnippet={(snippetCode) => {
+        setFile((cur) => {
+          if (!cur) return null;
+          return { ...cur, content: cur.content + '\n' + snippetCode };
+        });
+        setView('code');
+        log('ok', 'RTL Yapi Tasi (Snippet) koda eklendi.');
+      }}
     />
   );
 
@@ -484,6 +492,7 @@ function App() {
           <Explorer
             info={info} top={top} tb={tb} activeFile={file?.path ?? null}
             onOpenFile={openFile} onSelectTop={setTop} onSelectTb={setTb}
+            onOpenTbBuilder={() => setShowTbBuilder(true)}
           />
         </aside>
         <div className="flex-1 flex flex-col min-w-0">

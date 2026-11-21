@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
-  Loader2, ShieldCheck, Cpu, Sparkles, ArrowRight, FileCode, Wand2, CheckCircle2, Undo2, EyeOff, Eye, GitBranch, AlertTriangle, X,
+  Loader2, ShieldCheck, Cpu, Sparkles, ArrowRight, FileCode, Wand2, CheckCircle2, Undo2, EyeOff, Eye, GitBranch, AlertTriangle, X, HelpCircle, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import {
   Diagnostic, FsmMachine, FsmReport, LintResult, OptimizationReport, OptimizationSuggestion, SynthStats, WorkspaceInfo,
 } from '../types';
 import { errMsg, ws } from '../services/api';
 import { useI18n } from '../i18n';
+import { explainRtlError } from '../services/errorExplainer';
 
 interface Props {
   info: WorkspaceInfo;
@@ -278,6 +279,7 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
   const [fixMsg, setFixMsg] = useState<string>('');
   const [undoStack, setUndoStack] = useState<UndoSnapshot[]>([]);
   const [diffPreview, setDiffPreview] = useState<{ suggestion: OptimizationSuggestion; idx: number } | null>(null);
+  const [expandedDiagIdx, setExpandedDiagIdx] = useState<number | null>(0);
 
   useEffect(() => {
     if (stats?.optimization) {
@@ -691,14 +693,83 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
         </div>
         {lint && !lint.success && <p className="text-sm text-red-400">{lint.error}</p>}
         {lint?.success && lint.diagnostics.length === 0 && <p className="text-sm text-green-400">{tr.noIssues}</p>}
-        <div className="space-y-1">
-          {lint?.diagnostics.map((d, i) => (
-            <button key={i} onClick={() => onGoto(d)} className="w-full text-left text-xs px-3 py-1.5 rounded bg-darker hover:bg-slate-800 flex gap-2">
-              <span className={d.severity === 'error' ? 'text-red-400' : 'text-yellow-400'}>{d.severity}</span>
-              <span className="font-mono text-gray-400">{d.file}:{d.line}</span>
-              <span className="text-gray-200">{d.message}</span>
-            </button>
-          ))}
+        <div className="space-y-2">
+          {lint?.diagnostics.map((d, i) => {
+            const isExpanded = expandedDiagIdx === i;
+            const explanation = explainRtlError(d.message, isTr);
+            return (
+              <div key={i} className="rounded-lg border border-slate-800 bg-slate-950/60 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExpandedDiagIdx(isExpanded ? null : i);
+                    onGoto(d);
+                  }}
+                  className="w-full text-left text-xs px-3 py-2 bg-darker hover:bg-slate-800/80 flex items-center gap-2 transition"
+                >
+                  <span className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                    d.severity === 'error'
+                      ? 'bg-red-950/80 text-red-400 border border-red-500/30'
+                      : 'bg-yellow-950/80 text-yellow-400 border border-yellow-500/30'
+                  }`}>
+                    {d.severity.toUpperCase()}
+                  </span>
+                  <span className="font-mono text-slate-400">{d.file}:{d.line}</span>
+                  <span className="text-slate-200 truncate flex-1 font-mono">{d.message}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono hidden sm:inline">
+                    {explanation.ruleCode}
+                  </span>
+                  {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />}
+                </button>
+
+                {isExpanded && (
+                  <div className="p-3.5 bg-slate-900/90 border-t border-slate-800 space-y-3 text-xs">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-800/60">
+                      <div className="flex items-center gap-2 text-indigo-400 font-semibold font-mono text-xs">
+                        <HelpCircle className="w-4 h-4 text-indigo-400" />
+                        <span>{isTr ? 'Neden Hata Aldim? (Mentor Analizi)' : 'Why Did I Get This Error? (Mentor Analysis)'}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onGoto(d)}
+                        className="px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-[11px] flex items-center gap-1 font-mono transition"
+                      >
+                        <span>{isTr ? 'Koda Odaklan' : 'Focus Code'}</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
+                        1. {isTr ? 'Ne Oldu?' : 'What Happened?'}
+                      </span>
+                      <p className="text-slate-200 leading-relaxed bg-slate-950/50 p-2.5 rounded border border-slate-800/80">
+                        {explanation.whatHappened}
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider block">
+                        2. {isTr ? 'Donanimda Ne Anlama Gelir?' : 'What Does It Mean In Hardware?'}
+                      </span>
+                      <p className="text-slate-300 leading-relaxed bg-amber-950/20 p-2.5 rounded border border-amber-500/30 text-amber-200/90">
+                        {explanation.hardwareMeaning}
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider block">
+                        3. {isTr ? 'Dogru Yazim Ornegi' : 'Correct Code Example'}
+                      </span>
+                      <pre className="p-2.5 rounded bg-slate-950 border border-slate-800 font-mono text-[11px] text-emerald-300 overflow-x-auto whitespace-pre">
+                        {explanation.correctExample}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

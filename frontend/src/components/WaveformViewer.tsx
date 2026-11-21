@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Maximize2, ZoomIn, ZoomOut, ListPlus, X, Loader2, Activity, Ruler } from 'lucide-react';
+import { Play, Maximize2, ZoomIn, ZoomOut, ListPlus, X, Loader2, Activity, Ruler, AlertTriangle } from 'lucide-react';
 import { WaveData, WaveSignal } from '../types';
 import { useI18n } from '../i18n';
 
@@ -81,7 +81,7 @@ function formatValue(bits: string, width: number, radix: Radix): string {
 }
 
 export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Props) {
-  const { lang } = useI18n();
+  const { lang, t: tr } = useI18n();
   const isTr = lang === 'tr';
   const [selected, setSelected] = useState<string[]>([]);
   const [view, setView] = useState<[number, number]>([0, 100]);
@@ -437,10 +437,10 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
             <button
               type="button"
               onClick={() => { setMarkerA(null); setMarkerB(null); }}
-              className="text-slate-400 hover:text-rose-400 text-xs ml-1"
+              className="text-slate-400 hover:text-rose-400 p-0.5 rounded ml-1"
               title={isTr ? 'İmleçleri temizle' : 'Clear markers'}
             >
-              ✕
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
@@ -507,9 +507,28 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
       </div>
 
       {!wave ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-2">
-          <p>{isTr ? 'Henüz waveform yok.' : 'No waveform loaded yet.'}</p>
-          <p className="text-xs">{status || (isTr ? 'Simülasyonu çalıştırın; testbench\'te $dumpfile yazmanız gerekmez.' : 'Click Run Simulation; $dumpfile is injected automatically.')}</p>
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+          <div className="max-w-md w-full glass-strong p-6 rounded-xl border border-slate-700/80 shadow-glass flex flex-col items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+              <Activity className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-semibold text-slate-200">{tr.waveZeroTitle}</h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                {tr.waveZeroDesc(tbTop)}
+              </p>
+              {status && <p className="text-[11px] font-mono text-amber-300 mt-1">{status}</p>}
+            </div>
+            <button
+              type="button"
+              disabled={!tbTop || busy}
+              onClick={onRun}
+              className="btn-primary w-full py-2 px-4 text-xs font-semibold flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 shadow-none hover:shadow-glow"
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              {tr.runSim}
+            </button>
+          </div>
         </div>
       ) : (
         <>
@@ -532,7 +551,9 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
                   className="w-full px-2 py-0.5 rounded bg-darker border border-slate-700 text-xs font-mono placeholder:text-slate-500 focus:border-indigo-500 outline-none"
                 />
                 {signalSearch && (
-                  <button onClick={() => setSignalSearch('')} className="text-slate-500 hover:text-white text-xs px-1">✕</button>
+                  <button onClick={() => setSignalSearch('')} className="text-slate-500 hover:text-white p-0.5 rounded">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 )}
               </div>
               <div className="flex-1 overflow-y-auto">
@@ -640,10 +661,10 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
                     ? 'Otomatik Sinyal Ölçüm & X/Z Kök Neden Tablosu (A↔B Aralığı)'
                     : 'Automatic Signal Measurements & X/Z Root-Cause Table (A↔B Window)'}
                 </span>
-                <span className="text-indigo-400">
+                <span className="text-indigo-400 font-mono">
                   {markerA !== null && markerB !== null
-                    ? `${formatTime(Math.min(markerA, markerB), psTick)} ➔ ${formatTime(Math.max(markerA, markerB), psTick)}`
-                    : `0 ➔ ${formatTime(endT, psTick)}`}
+                    ? `${formatTime(Math.min(markerA, markerB), psTick)} -> ${formatTime(Math.max(markerA, markerB), psTick)}`
+                    : `0 -> ${formatTime(endT, psTick)}`}
                 </span>
               </div>
               <table className="w-full text-left border-collapse text-[11px]">
@@ -661,22 +682,23 @@ export default function WaveformViewer({ wave, tbTop, busy, status, onRun }: Pro
                   {measurementRows.map((r) => (
                     <tr key={r.sig.name} className="border-b border-slate-800/50 hover:bg-slate-900">
                       <td className="py-1 pr-2 text-slate-200">{r.sig.short}</td>
-                      <td className="py-1 px-2 text-amber-300">{r.valA}</td>
-                      <td className="py-1 px-2 text-orange-300">{r.valB}</td>
-                      <td className="py-1 px-2 text-sky-300">{r.edges}</td>
-                      <td className="py-1 px-2 text-emerald-300">{r.toggleFreqMhz !== '—' ? `${r.toggleFreqMhz} MHz` : '—'}</td>
-                      <td className="py-1 pl-2">
+                      <td className="py-1 px-2 text-amber-300 font-mono">{r.valA}</td>
+                      <td className="py-1 px-2 text-orange-300 font-mono">{r.valB}</td>
+                      <td className="py-1 px-2 text-sky-300 font-mono">{r.edges}</td>
+                      <td className="py-1 px-2 text-emerald-300 font-mono">{r.toggleFreqMhz !== '—' ? `${r.toggleFreqMhz} MHz` : '—'}</td>
+                      <td className="py-1 pl-2 font-mono">
                         {r.firstXZ !== null ? (
                           <button
                             type="button"
                             onClick={() => setMarkerA(r.firstXZ)}
-                            className="text-red-400 hover:underline"
+                            className="text-red-400 hover:underline inline-flex items-center gap-1"
                             title={isTr ? 'İlk X/Z anına imleç A ile git' : 'Jump Marker A to first X/Z timestamp'}
                           >
-                            ⚠ X/Z @ {formatTime(r.firstXZ, psTick)}
+                            <AlertTriangle className="w-3 h-3 text-red-400" />
+                            <span>[X/Z] @ {formatTime(r.firstXZ, psTick)}</span>
                           </button>
                         ) : (
-                          <span className="text-emerald-400">✓ Clean</span>
+                          <span className="text-emerald-400">[OK] Clean</span>
                         )}
                       </td>
                     </tr>

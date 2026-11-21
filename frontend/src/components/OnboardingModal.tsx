@@ -115,11 +115,11 @@ export default function OnboardingModal({ onClose, onOpenDemo, onOpenTools }: Pr
               body: 'İster hazır ECG/EEG şablonlarıyla sıfırdan RTL üret; ister "Kendi RTL Dosyam & Kendi Modelimle Çalış" moduna geçip projendeki .sv/.v/.vhd dosyasını otomatik algılat ve dışarıdan .json/.csv model/sinyal yükleyerek sadece kendi modülüne özel Golden Testbench üret.',
             },
             {
-              head: 'Tek Tıkla Otomatik Araç Kurulumu (Ayarlar / 🔧):',
-              body: 'Bilgisayarında Yosys, Icarus Verilog veya Verilator kurulu değilse sağ üstteki 🔧 (Ayarlar & Araçlar) butonuna tıklayıp "Tüm Eksik Araçları Otomatik Kur" diyerek tek tıkla kurabilirsin.',
+              head: 'Tek Tıkla Otomatik Araç Kurulumu (Ayarlar / Araçlar):',
+              body: 'Bilgisayarında Yosys, Icarus Verilog veya Verilator kurulu değilse sağ üstteki Araçlar butonuna tıklayıp "Tüm Eksik Araçları Otomatik Kur" diyerek tek tıkla kurabilirsin.',
             },
           ],
-          tip: 'Not: "Bir daha gösterme" seçeneğini işaretlersen bu rehber bir daha otomatik açılmaz; istediğin zaman sağ üstteki 🔧 Ayarlar menüsünden "Tanıtım Moduna Geç" butonuyla tekrar açabilirsin.',
+          tip: 'Not: "Bir daha gösterme" seçeneğini işaretlersen bu rehber bir daha otomatik açılmaz; istediğin zaman sağ üstteki Araçlar menüsünden "Tanıtım Moduna Geç" butonuyla tekrar açabilirsin.',
         },
       ]
     : [
@@ -215,11 +215,11 @@ export default function OnboardingModal({ onClose, onOpenDemo, onOpenTools }: Pr
               body: 'Either synthesize standalone ECG/EEG 1D-CNN cores from presets, OR switch to "Work with My Own RTL & Custom Model" to auto-detect your workspace .sv/.v/.vhd ports/weights, upload .json/.csv models, and generate a Golden Testbench for your own module.',
             },
             {
-              head: '1-Click Toolchain Installer (Settings / 🔧):',
-              body: 'Missing Yosys, Icarus, or Verilator? Click the 🔧 icon in the top-right and press "Auto-Install All Missing Tools".',
+              head: '1-Click Toolchain Installer (Settings / Tools):',
+              body: 'Missing Yosys, Icarus, or Verilator? Click the Tools icon in the top-right and press "Auto-Install All Missing Tools".',
             },
           ],
-          tip: 'Note: If you check "Don\'t show again", you can always reopen this guide from Settings (🔧) -> "Enter Tour Mode".',
+          tip: 'Note: If you check "Don\'t show again", you can always reopen this guide from Settings -> "Enter Tour Mode".',
         },
       ];
 

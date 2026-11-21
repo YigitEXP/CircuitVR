@@ -63,26 +63,26 @@ export default function TopBar(p: Props) {
   const toolGuidance = (name: string) => {
     const isFound = !!t?.[name]?.found;
     if (isFound) {
-      return `${name.toUpperCase()}: Yerel EDA aracı hazır (${t?.[name]?.path})`;
+      return tr.toolNative(name, t?.[name]?.path || '');
     }
-    return `${name.toUpperCase()}: Yerel PATH'te bulunamadı. Vercel Bulut üzerinden simüle ediliyor/sentezleniyor. Yerel çalıştırma için setup.bat veya ./setup.sh betiğini çalıştırın.`;
+    return tr.toolCloud(name);
   };
 
   const simTip = p.tb
     ? canSim && (isCloud || !t?.iverilog?.found)
-      ? 'Bulut Fallback Devrede: Tarayıcı içi / Vercel motoru ile simüle et (F5)'
-      : 'Simülasyonu çalıştır (F5)'
-    : 'Önce bir testbench seçin';
+      ? tr.simTipCloud
+      : tr.simTipNormal
+    : tr.selectTbFirst;
 
   const schemTip = p.top
     ? canSchem && (isCloud || !t?.yosys?.found)
-      ? 'Bulut Fallback Devrede: Yosys netlist şematiğini üret (F6)'
-      : 'Şematik üret (F6)'
-    : 'Önce bir top modül seçin';
+      ? tr.schemTipCloud
+      : tr.schemTipNormal
+    : tr.selectTopFirst;
 
   const lintTip = isCloud || !t?.verilator?.found
-    ? 'Bulut Fallback Devrede: Statik AST & Verilator ön denetimi çalıştır (F7)'
-    : 'Lint çalıştır (F7)';
+    ? tr.lintTipCloud
+    : tr.lintTipNormal;
 
   const picked = (files: FileList | null) => {
     if (!files) return;
@@ -114,7 +114,7 @@ export default function TopBar(p: Props) {
           {tbMods.map((m) => <option key={m}>{m}</option>)}
         </select>
       </label>
-      <label className="flex items-center gap-1 text-xs text-slate-400" title="Testbench $finish çağırmazsa bu süre sonunda durdurulur">
+      <label className="flex items-center gap-1 text-xs text-slate-400" title={tr.maxTimeHint}>
         {tr.maxTime}
         <input type="number" min={1} value={p.simTime}
           onChange={(e) => p.onSimTime(Math.max(1, Number(e.target.value) || 1))} className={`${sel} w-20 font-mono`} />
@@ -146,27 +146,27 @@ export default function TopBar(p: Props) {
       <div className="ml-auto flex items-center gap-3 text-xs">
         {p.busy && <span className="text-yellow-300 animate-pulse">{tr.running}: {p.busy}…</span>}
         {p.onOpenPalette && (
-          <Tip text="Hızlı Komut Paleti & Dosya Arama (Ctrl+K)" align="right">
+          <Tip text={tr.commandsPalette} align="right">
             <button
               onClick={p.onOpenPalette}
               className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-darker/90 border border-slate-700 hover:border-indigo-500/60 text-slate-300 hover:text-white transition"
             >
               <Search className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="hidden xl:inline text-[11px]">Komutlar</span>
+              <span className="hidden xl:inline text-[11px]">{tr.commands}</span>
               <span className="text-[10px] font-mono px-1 rounded bg-slate-800 text-slate-400">Ctrl+K</span>
             </button>
           </Tip>
         )}
-        <label className="flex items-center gap-1 text-slate-400" title="Kaydedince / dosya değişince lint otomatik çalışır">
+        <label className="flex items-center gap-1 text-slate-400" title={tr.autoLintHint}>
           <input type="checkbox" checked={p.autoLint} onChange={(e) => p.onAutoLint(e.target.checked)} /> {tr.autoLint}
         </label>
-        <Tip text="Projeye dosya ekle (.sv/.v/.vhd)" align="right">
+        <Tip text={tr.addFileTip} align="right">
           <button onClick={() => fileInput.current?.click()} className="text-slate-400 hover:text-white"><FilePlus2 className="w-4 h-4" /></button>
         </Tip>
-        <Tip text="Projeye klasör ekle" align="right">
+        <Tip text={tr.addFolderTip} align="right">
           <button onClick={() => dirInput.current?.click()} className="text-slate-400 hover:text-white"><FolderUp className="w-4 h-4" /></button>
         </Tip>
-        <Tip text="Klasörü yeniden tara" align="right">
+        <Tip text={tr.refreshFolderTip} align="right">
           <button onClick={p.onRefresh} className="text-slate-400 hover:text-white"><RefreshCw className="w-4 h-4" /></button>
         </Tip>
         <div className="h-5 w-px bg-slate-700" />
@@ -190,10 +190,10 @@ export default function TopBar(p: Props) {
             </Tip>
           );
         })}
-        <Tip text="Araç kurulum yardımcısı" align="right">
+        <Tip text={tr.toolsInstallerTip} align="right">
           <button onClick={p.onShowTools} className="text-slate-400 hover:text-white"><Wrench className="w-4 h-4" /></button>
         </Tip>
-        <Tip text="Geliştirici & Sistem Mimarisi (Yiğit Can Aktürk)" align="right">
+        <Tip text={tr.devModalTip} align="right">
           <button onClick={p.onShowDev} className="text-slate-400 hover:text-indigo-300"><Terminal className="w-4 h-4" /></button>
         </Tip>
         <LangToggle />

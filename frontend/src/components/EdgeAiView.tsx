@@ -341,10 +341,10 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
       }));
       setUploadNotice(
         isTr
-          ? `✓ [${imp.format}] ${imp.filename} yüklendi` +
+          ? `[OK] [${imp.format}] ${imp.filename} yüklendi` +
               (imp.weights ? ` (${imp.weights.length} çekirdek ağırlığı)` : '') +
               (imp.signal ? ` (${imp.signal.length} sinyal örneği)` : '')
-          : `✓ [${imp.format}] Loaded ${imp.filename}` +
+          : `[OK] [${imp.format}] Loaded ${imp.filename}` +
               (imp.weights ? ` (${imp.weights.length} weights)` : '') +
               (imp.signal ? ` (${imp.signal.length} signal samples)` : '')
       );
@@ -406,15 +406,15 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
         onInjected(res.workspace, res.tb_file, res.tb_code, res.top_module, res.tb_module);
         setInjectedMsg(
           isTr
-            ? `✓ Kendi RTL dosyanız (${res.rtl_file} — ${res.top_module}) korundu ve yalnızca ona özel Golden Testbench (${res.tb_file}) üretildi! Şimdi Simüle Et (F5) ile test edebilirsiniz.`
-            : `✓ Preserved your RTL (${res.rtl_file} — ${res.top_module}) and generated dedicated Golden TB (${res.tb_file})! Run Simulation (F5).`
+            ? `[OK] Kendi RTL dosyanız (${res.rtl_file} — ${res.top_module}) korundu ve yalnızca ona özel Golden Testbench (${res.tb_file}) üretildi! Şimdi Simüle Et (F5) ile test edebilirsiniz.`
+            : `[OK] Preserved your RTL (${res.rtl_file} — ${res.top_module}) and generated dedicated Golden TB (${res.tb_file})! Run Simulation (F5).`
         );
       } else {
         onInjected(res.workspace, res.rtl_file, res.rtl_code, res.top_module, res.tb_module);
         setInjectedMsg(
           isTr
-            ? `✓ ${res.rtl_file} ve ${res.tb_file} (${res.analysis.q_format} bit-exact golden testbench) projeye aktarıldı! Şimdi F5 (Simüle Et) veya F6 (Şematik) çalıştırabilirsiniz.`
-            : `✓ Generated ${res.rtl_file} & ${res.tb_file} (${res.analysis.q_format} bit-exact golden testbench) into workspace! Click Simulate (F5) or Schematic (F6).`
+            ? `[OK] ${res.rtl_file} ve ${res.tb_file} (${res.analysis.q_format} bit-exact golden testbench) projeye aktarıldı! Şimdi F5 (Simüle Et) veya F6 (Şematik) çalıştırabilirsiniz.`
+            : `[OK] Generated ${res.rtl_file} & ${res.tb_file} (${res.analysis.q_format} bit-exact golden testbench) into workspace! Click Simulate (F5) or Schematic (F6).`
         );
       }
     } catch (e) {
@@ -450,7 +450,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                   : 'Edge AI & Biosignal (1D-CNN / DSP) Hardware Co-Design Studio'}
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-                PyTorch/NumPy Float32 ➔ Fixed-Point Qm.n RTL
+                {'PyTorch/NumPy Float32 -> Fixed-Point Qm.n RTL'}
               </span>
             </div>
             <p className="text-xs text-slate-400">
@@ -625,7 +625,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                   }
                 >
                   <Download className="w-3.5 h-3.5" />
-                  {isTr ? '🐍 export_to_circuitvr.py' : '🐍 export_to_circuitvr.py'}
+                  export_to_circuitvr.py
                 </button>
               )}
             </div>
@@ -666,7 +666,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                   {inspectedRtl && (
                     <div className="text-[11px] bg-slate-900/90 border border-slate-800 rounded p-2.5 space-y-1 font-mono">
                       <div className="text-emerald-300 font-semibold">
-                        ✓ {isTr ? inspectedRtl.summary_tr : inspectedRtl.summary_en}
+                        [OK] {isTr ? inspectedRtl.summary_tr : inspectedRtl.summary_en}
                       </div>
                       <div className="text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
                         <span>
@@ -1130,7 +1130,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                         <span className={p.inference_sqnr_db >= 30 ? 'text-emerald-400' : 'text-amber-400'}>
                           {p.inference_sqnr_db}dB
                         </span>
-                        {p.recommended && <span className="text-emerald-300">★</span>}
+                        {p.recommended && <span className="text-emerald-300 font-mono text-[10px] font-bold">[REC]</span>}
                       </button>
                     );
                   })}
@@ -1578,7 +1578,7 @@ export default function EdgeAiView({ info, onInjected, onRunSim, onRunSchematic 
                         }`}
                       >
                         <td className="py-1.5 px-3 font-bold text-sky-400">
-                          {p.q_format} {p.recommended && '★ (Önerilen)'}
+                          {p.q_format} {p.recommended && (isTr ? '[Önerilen]' : '[Recommended]')}
                         </td>
                         <td className="py-1.5 px-3">
                           {p.int_bits}.{p.frac_bits} ({p.total_bits}b)

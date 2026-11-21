@@ -95,11 +95,11 @@ function FsmDiagramCard({
           </span>
           {fsm.has_safe_default ? (
             <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">
-              ✓ Safe Default
+              [OK] Safe Default
             </span>
           ) : (
             <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono">
-              ⚠ Missing Default Recovery
+              [WARN] Missing Default Recovery
             </span>
           )}
           {fsm.dead_states.length > 0 && (
@@ -229,7 +229,7 @@ function FsmDiagramCard({
 
         <div className="space-y-1.5 text-xs font-mono max-h-48 overflow-y-auto">
           <div className="text-[11px] text-slate-400 flex items-center justify-between pb-1 border-b border-slate-800">
-            <span>{isTr ? 'Durum Geçiş Tablosu (From ➔ To)' : 'State Transitions (From ➔ To)'}</span>
+            <span>{isTr ? 'Durum Geçiş Tablosu (From -> To)' : 'State Transitions (From -> To)'}</span>
             <span className="text-emerald-400">Reset: {fsm.reset_state}</span>
           </div>
           {fsm.transitions.map((t, idx) => {
@@ -248,7 +248,7 @@ function FsmDiagramCard({
                 title={isTr ? 'Bu geçiş koşuluna kodda odaklan' : 'Jump to this transition in code'}
               >
                 <span className="text-sky-300">
-                  {t.from} <span className="text-slate-500">➔</span> <strong className="text-emerald-300">{t.to}</strong>
+                  {t.from} <span className="text-slate-500">{'->'}</span> <strong className="text-emerald-300">{t.to}</strong>
                 </span>
                 <span className="text-[10px] text-slate-400 truncate max-w-[170px]" title={t.condition}>
                   {t.condition}
@@ -303,15 +303,15 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
         setDiffPreview(null);
         setFixMsg(
           isTr
-            ? `✓ Otomatik düzeltme uygulandı: ${s.file}:${s.line} (${s.rule_id || s.category})`
-            : `✓ Auto-fix applied to ${s.file}:${s.line} (${s.rule_id || s.category})`
+            ? `[OK] Otomatik düzeltme uygulandı: ${s.file}:${s.line} (${s.rule_id || s.category})`
+            : `[OK] Auto-fix applied to ${s.file}:${s.line} (${s.rule_id || s.category})`
         );
         onAutoFixed?.(res.file, res.content, s.line);
       } else {
         setFixMsg(
           isTr
-            ? `⚠ İlgili satır zaten değiştirilmiş olabilir; dosyayı açıp kontrol edin (${s.file}:${s.line}).`
-            : `⚠ Target snippet already modified; please inspect ${s.file}:${s.line}.`
+            ? `[WARN] İlgili satır zaten değiştirilmiş olabilir; dosyayı açıp kontrol edin (${s.file}:${s.line}).`
+            : `[WARN] Target snippet already modified; please inspect ${s.file}:${s.line}.`
         );
       }
     } catch (e) {
@@ -335,8 +335,8 @@ export default function AnalysisView({ info, top, lint, stats, busy, onLint, onS
         setOpt(res.optimization);
         setFixMsg(
           isTr
-            ? `✓ Kural bastırıldı (// circuitvr-ignore ${s.rule_id}): ${s.file}:${s.line}`
-            : `✓ Rule suppressed (// circuitvr-ignore ${s.rule_id}) at ${s.file}:${s.line}`
+            ? `[OK] Kural bastırıldı (// circuitvr-ignore ${s.rule_id}): ${s.file}:${s.line}`
+            : `[OK] Rule suppressed (// circuitvr-ignore ${s.rule_id}) at ${s.file}:${s.line}`
         );
         onAutoFixed?.(res.file, res.content, s.line);
       }

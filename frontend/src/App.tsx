@@ -94,7 +94,7 @@ function App() {
       setSchematicErr(''); setStale(false); setFile(null); setView('code'); setLogs([]);
       const first = i.files.find((f) => f.group === 'rtl' && !f.is_header) ?? i.files.find((f) => !f.is_header);
       if (first) await readInto(i.root, first.path).catch(() => undefined);
-      i.warnings.forEach((w) => log('info', `⚠ ${w}`));
+      i.warnings.forEach((w) => log('info', `[WARN] ${w}`));
     } else {
       setTop((t) => (i.modules[t] ? t : i.default_top ?? ''));
       setTb((t) => (i.modules[t] ? t : i.default_tb ?? ''));

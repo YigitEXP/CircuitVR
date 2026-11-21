@@ -16,6 +16,11 @@
   button:disabled { @apply cursor-not-allowed; }
   ::selection { background: rgba(79,140,255,0.35); }
 
+  /* Tabular figures for telemetry, timers, clocks, frequencies, and counters */
+  .tnum, .tabular-nums, [class*="font-mono"] {
+    font-variant-numeric: tabular-nums;
+  }
+
   /* İnce, koyu kaydırma çubukları */
   * { scrollbar-width: thin; scrollbar-color: #2b3a58 transparent; }
   *::-webkit-scrollbar { width: 10px; height: 10px; }

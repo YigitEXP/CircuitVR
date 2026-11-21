@@ -41,7 +41,9 @@ export default function BottomPanel({ problems, logs, simLog, onGoto }: Props) {
             problems.length === 0 ? <div className="text-gray-500 p-1">{tr.noProblems}</div> :
             problems.map((p, i) => (
               <button key={i} onClick={() => onGoto(p)} className="w-full text-left flex gap-3 px-2 py-0.5 hover:bg-slate-800 rounded">
-                <span className={p.severity === 'error' ? 'text-red-400' : 'text-yellow-400'}>{p.severity === 'error' ? '✖' : '⚠'}</span>
+                <span className={`font-semibold text-[10px] ${p.severity === 'error' ? 'text-red-400' : 'text-yellow-400'}`}>
+                  {p.severity === 'error' ? '[ERR]' : '[WARN]'}
+                </span>
                 <span className="text-gray-400">{p.file}:{p.line}</span>
                 <span className="text-gray-200 whitespace-pre-wrap">{p.message}</span>
                 {p.source && <span className="ml-auto text-slate-500">{p.source}</span>}

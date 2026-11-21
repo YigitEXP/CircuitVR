@@ -15,7 +15,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
-import { Zap, ZoomIn, ZoomOut, Maximize2, Download } from 'lucide-react';
+import { Zap, ZoomIn, ZoomOut, Maximize2, Download, X } from 'lucide-react';
 import { SchematicGraph, SchematicNode } from '../types';
 import { useI18n } from '../i18n';
 
@@ -365,13 +365,15 @@ const Inner: React.FC<Props> = ({ graph }) => {
           className="ml-auto px-2 py-1 rounded bg-darker border border-gray-700 text-xs"
         />
         {selectedNet && (
-          <button className="px-2 py-1 rounded bg-yellow-600 text-xs" onClick={() => setSelectedNet(null)}>
-            Net: {selectedNet} ✕
+          <button className="px-2 py-1 rounded bg-yellow-600 hover:bg-yellow-500 text-xs flex items-center gap-1 font-mono" onClick={() => setSelectedNet(null)}>
+            <span>Net: {selectedNet}</span>
+            <X className="w-3 h-3" />
           </button>
         )}
         {selectedNodeId && (
-          <button className="px-2 py-1 rounded bg-sky-600 text-xs" onClick={() => setSelectedNodeId(null)}>
-            Fan-In/Out: {selectedNodeId.replace(/^(cell:|port:)/, '')} ✕
+          <button className="px-2 py-1 rounded bg-sky-600 hover:bg-sky-500 text-xs flex items-center gap-1 font-mono" onClick={() => setSelectedNodeId(null)}>
+            <span>Fan-In/Out: {selectedNodeId.replace(/^(cell:|port:)/, '')}</span>
+            <X className="w-3 h-3" />
           </button>
         )}
       </div>
